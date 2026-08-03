@@ -142,6 +142,20 @@ def sync_account_metrics(token, user_id, acc):
         print(f"[-] Gagal update telemetry akun: {e}")
         return False
 
+def get_ignored_tickets(token, user_id):
+    url = f"{SUPABASE_URL}/rest/v1/ignored_tickets?user_id=eq.{user_id}&select=ticket"
+    req = urllib.request.Request(url, method='GET')
+    req.add_header('apikey', SUPABASE_KEY)
+    req.add_header('Authorization', f'Bearer {token}')
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            return set(str(item['ticket']) for item in data if 'ticket' in item)
+    except Exception as e:
+        print(f"[-] Gagal mengambil daftar blacklist/ignored tickets: {e}")
+        return set()
+
 # ==========================================
 # FUNGSI UTAMA
 # ==========================================
@@ -157,6 +171,11 @@ def main():
         return
         
     print(f"Berhasil login ke jurnal! User ID: {user_id}")
+
+    # Ambil daftar tiket transaksi yang dihapus/diblacklist oleh user di web
+    ignored_tickets = get_ignored_tickets(token, user_id)
+    if ignored_tickets:
+        print(f"[*] Terdeteksi {len(ignored_tickets)} tiket yang dihapus/diblacklist di Web (tidak akan ditarik ulang).")
 
     # 2. Inisialisasi MetaTrader 5
     print("\nMenghubungkan ke MetaTrader 5...")
@@ -183,6 +202,10 @@ def main():
     if open_positions:
         print(f"Ditemukan {len(open_positions)} posisi aktif berjalan di MT5.")
         for p in open_positions:
+            if str(p.ticket) in ignored_tickets:
+                print(f"[-] Dilewati (Dihapus dari Web / Blacklist): Posisi Berjalan ID {p.ticket}")
+                continue
+            
             direction = "Long" if p.type == 0 else "Short"
             market = "Crypto" if ("BTC" in p.symbol.upper() or "ETH" in p.symbol.upper()) else "Forex"
             
@@ -248,6 +271,11 @@ def main():
     else:
         print(f"Ditemukan {len(deals)} transaksi di histori MT5.")
         for deal in deals:
+            # Lewati jika transaksi sudah pernah dihapus/diblacklist oleh user dari web
+            if str(deal.position_id) in ignored_tickets or str(deal.ticket) in ignored_tickets:
+                print(f"[-] Dilewati (Dihapus dari Web / Blacklist): Position ID {deal.position_id} / Deal {deal.ticket}")
+                continue
+
             # Lewati deal balance deposit/withdrawal atau entry-in jika posisinya sudah ditutup
             if deal.entry != 1:
                 continue

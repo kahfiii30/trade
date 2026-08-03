@@ -68,3 +68,17 @@ export const isTradeBE = (trade: Partial<Trade>): boolean => {
   if (trade.result === 'Win' || trade.result === 'Loss') return false;
   return getTradeNetPnL(trade) === 0;
 };
+
+/**
+ * Extracts MT5 position ID or ticket from trade metadata
+ */
+export const extractTradeTicket = (trade: Partial<Trade>): string | null => {
+  if (trade.ticket) return String(trade.ticket);
+  if (trade.notes) {
+    const match = trade.notes.match(/Position ID:\s*(\d+)/i) || trade.notes.match(/Ticket:\s*(\d+)/i);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
+};

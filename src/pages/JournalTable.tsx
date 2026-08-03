@@ -29,7 +29,8 @@ import {
   getTradeGrossPnL,
   getTradeFee,
   isTradeWin, 
-  isTradeLoss 
+  isTradeLoss,
+  extractTradeTicket
 } from '../utils/tradeUtils';
 
 export const JournalTable = () => {
@@ -123,11 +124,37 @@ export const JournalTable = () => {
     setIsDeleting(true);
     try {
       if (deleteModal.isAll) {
+        // Collect all MT5 tickets/positions to blacklist
+        const ticketsToIgnore = trades
+          .map(t => extractTradeTicket(t))
+          .filter((t): t is string => !!t)
+          .map(t => ({
+            user_id: targetUserId,
+            ticket: t,
+            reason: 'Deleted All by user from Web'
+          }));
+
+        if (ticketsToIgnore.length > 0) {
+          await supabase.from('ignored_tickets').upsert(ticketsToIgnore, { onConflict: 'user_id,ticket' });
+        }
+
         const { error } = await supabase.from('trades').delete().eq('user_id', targetUserId);
         if (error) throw error;
         setTrades([]);
-        showToast('Semua transaksi di jurnal berhasil dihapus.');
+        showToast('Semua transaksi di jurnal berhasil dihapus dan diblacklist dari MT5 sync.');
       } else if (deleteModal.tradeId) {
+        // Find deleted trade ticket and add to blacklist
+        const targetTrade = trades.find(t => t.id === deleteModal.tradeId);
+        const ticket = targetTrade ? extractTradeTicket(targetTrade) : null;
+
+        if (ticket) {
+          await supabase.from('ignored_tickets').upsert({
+            user_id: targetUserId,
+            ticket: ticket,
+            reason: `Deleted by user from Web (${targetTrade?.pair || ''})`
+          }, { onConflict: 'user_id,ticket' });
+        }
+
         const { error } = await supabase.from('trades').delete().eq('id', deleteModal.tradeId);
         if (error) throw error;
         setTrades(prev => prev.filter(t => t.id !== deleteModal.tradeId));
