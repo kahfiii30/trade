@@ -25,6 +25,8 @@ import {
   Area, 
   BarChart,
   Bar,
+  Cell,
+  ReferenceLine,
   XAxis, 
   YAxis, 
   CartesianGrid, 
@@ -104,15 +106,22 @@ export const Dashboard = () => {
     };
   }, [targetUserId]);
 
-  // Derived Performance Metrics
-  const totalTrades = trades.length;
-  const winningTrades = trades.filter(t => isTradeWin(t));
-  const losingTrades = trades.filter(t => isTradeLoss(t));
+  // Separate Closed and Open / Pending positions
+  const closedTrades = trades.filter(t => t.result !== 'Pending');
+  const pendingTrades = trades.filter(t => t.result === 'Pending');
+
+  // Performance Metrics (Calculated on Closed Trades)
+  const totalTrades = closedTrades.length;
+  const winningTrades = closedTrades.filter(t => isTradeWin(t));
+  const losingTrades = closedTrades.filter(t => isTradeLoss(t));
   const winRate = totalTrades > 0 ? (winningTrades.length / totalTrades) * 100 : 0;
   
-  const totalNetPnL = trades.reduce((acc, t) => acc + getTradeNetPnL(t), 0);
-  const currentBalance = initialCapital + totalNetPnL;
-  const returnPercentage = initialCapital > 0 ? (totalNetPnL / initialCapital) * 100 : 0;
+  const closedNetPnL = closedTrades.reduce((acc, t) => acc + getTradeNetPnL(t), 0);
+  const floatingPnL = pendingTrades.reduce((acc, t) => acc + getTradeNetPnL(t), 0);
+  
+  const realizedBalance = initialCapital + closedNetPnL;
+  const liveEquity = realizedBalance + floatingPnL;
+  const returnPercentage = initialCapital > 0 ? (closedNetPnL / initialCapital) * 100 : 0;
 
   const totalGrossProfit = winningTrades.reduce((acc, t) => acc + Math.max(0, getTradeNetPnL(t)), 0);
   const totalGrossLoss = Math.abs(losingTrades.reduce((acc, t) => acc + Math.min(0, getTradeNetPnL(t)), 0));
@@ -129,7 +138,7 @@ export const Dashboard = () => {
     ny: { trades: 0, pnl: 0, wins: 0 }
   };
 
-  trades.forEach(t => {
+  closedTrades.forEach(t => {
     const tradeTime = getTradeDate(t);
     const d = new Date(tradeTime);
     const hour = d.getUTCHours();
@@ -151,40 +160,64 @@ export const Dashboard = () => {
     }
   });
 
-  // Calculate Cumulative Equity, Daily PnL and Drawdown
+  // Calculate Cumulative Equity Chronologically (Oldest to Newest)
+  const sortedClosedTrades = [...closedTrades].sort((a, b) => {
+    return new Date(getTradeDate(a)).getTime() - new Date(getTradeDate(b)).getTime();
+  });
+
   let runningBalance = initialCapital;
   let peakBalance = initialCapital;
   let maxDrawdownPct = 0;
 
-  const chartData = trades.map((trade) => {
-    const netPnL = getTradeNetPnL(trade);
-    runningBalance += netPnL;
-    
-    if (runningBalance > peakBalance) {
-      peakBalance = runningBalance;
-    }
-    
-    const drawdownAmount = peakBalance - runningBalance;
-    const currentDrawdownPct = peakBalance > 0 ? (drawdownAmount / peakBalance) * 100 : 0;
-    if (currentDrawdownPct > maxDrawdownPct) {
-      maxDrawdownPct = currentDrawdownPct;
-    }
+  const chartData: any[] = [];
 
-    const tradeDate = getTradeDate(trade);
-    const dateStr = tradeDate ? new Date(tradeDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+  if (sortedClosedTrades.length > 0) {
+    // Starting Point at Initial Capital
+    chartData.push({
+      date: 'Start Capital',
+      equity: initialCapital,
+      pnl: 0,
+      drawdown: 0,
+      isStart: true,
+      pair: 'Base Deposit'
+    });
 
-    return {
-      date: dateStr,
-      equity: runningBalance,
-      pnl: netPnL,
-      drawdown: currentDrawdownPct,
-      tradeId: trade.id,
-      pair: trade.pair
-    };
-  });
+    sortedClosedTrades.forEach((trade) => {
+      const netPnL = getTradeNetPnL(trade);
+      runningBalance += netPnL;
+      
+      if (runningBalance > peakBalance) {
+        peakBalance = runningBalance;
+      }
+      
+      const drawdownAmount = peakBalance - runningBalance;
+      const currentDrawdownPct = peakBalance > 0 ? (drawdownAmount / peakBalance) * 100 : 0;
+      if (currentDrawdownPct > maxDrawdownPct) {
+        maxDrawdownPct = currentDrawdownPct;
+      }
+
+      const tradeDate = getTradeDate(trade);
+      const dateStr = tradeDate 
+        ? new Date(tradeDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) 
+        : '-';
+
+      chartData.push({
+        date: dateStr,
+        equity: Number(runningBalance.toFixed(2)),
+        pnl: Number(netPnL.toFixed(2)),
+        drawdown: Number(currentDrawdownPct.toFixed(2)),
+        tradeId: trade.id,
+        pair: trade.pair,
+        result: trade.result,
+        direction: trade.direction
+      });
+    });
+  }
 
   // Trader Discipline Score (0-100)
-  const disciplineScore = Math.max(70, Math.min(98, 100 - (maxDrawdownPct > 10 ? 15 : 0) + (profitFactor > 1.5 ? 10 : 0)));
+  const disciplineScore = Math.max(50, Math.min(98, Math.round(100 - (maxDrawdownPct > 10 ? 20 : maxDrawdownPct * 1.2) + (profitFactor > 1.5 ? 10 : 0))));
+
+  const isProfitablePortfolio = realizedBalance >= initialCapital;
 
   if (isLoading) {
     return (
@@ -249,24 +282,24 @@ export const Dashboard = () => {
       {/* Top 4 Luxury Performance Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
-          title="Cumulative Net P&L" 
-          value={`$${totalNetPnL.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          subtitle={`Equity: $${currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
-          trend={totalNetPnL >= 0 ? 'up' : 'down'}
-          trendValue={`${returnPercentage >= 0 ? '+' : ''}${returnPercentage.toFixed(2)}%`}
+          title="Account Equity & Balance" 
+          value={`$${liveEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          subtitle={`Closed: $${realizedBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })} ${floatingPnL !== 0 ? `(Float: ${floatingPnL >= 0 ? '+' : ''}$${floatingPnL.toFixed(2)})` : ''}`}
+          trend={closedNetPnL >= 0 ? 'up' : 'down'}
+          trendValue={`${returnPercentage >= 0 ? '+' : ''}${returnPercentage.toFixed(2)}% Net`}
           icon={<DollarSign className="w-4 h-4" />}
-          accentColor={totalNetPnL >= 0 ? 'emerald' : 'rose'}
-          glow={totalNetPnL >= 0 ? 'emerald' : 'rose'}
+          accentColor={closedNetPnL >= 0 ? 'emerald' : 'rose'}
+          glow={closedNetPnL >= 0 ? 'emerald' : 'rose'}
         />
 
         <StatCard 
           title="Win Rate Edge" 
           value={`${winRate.toFixed(1)}%`}
           subtitle={`${winningTrades.length} Wins / ${losingTrades.length} Losses`}
-          trend={winRate >= 50 ? 'up' : 'neutral'}
-          trendValue={`${totalTrades} Trades`}
+          trend={winRate >= 50 ? 'up' : winRate > 0 ? 'neutral' : 'down'}
+          trendValue={`${totalTrades} Closed`}
           icon={<Target className="w-4 h-4" />}
-          accentColor={winRate >= 50 ? 'emerald' : 'gold'}
+          accentColor={winRate >= 50 ? 'emerald' : winRate > 0 ? 'gold' : 'rose'}
         />
 
         <StatCard 
@@ -274,10 +307,10 @@ export const Dashboard = () => {
           value={profitFactor > 50 ? '50+' : profitFactor.toFixed(2)}
           subtitle={`Avg R:R: 1:${riskRewardRatio.toFixed(2)}`}
           trend={profitFactor >= 1.5 ? 'up' : profitFactor >= 1 ? 'neutral' : 'down'}
-          trendValue={profitFactor >= 1.5 ? 'Optimal' : 'Needs Work'}
+          trendValue={profitFactor >= 1.5 ? 'Optimal' : profitFactor > 0 ? 'Moderate' : 'Under Drawdown'}
           icon={<TrendingUp className="w-4 h-4" />}
-          accentColor="gold"
-          glow="gold"
+          accentColor={profitFactor >= 1.5 ? 'emerald' : profitFactor > 0 ? 'gold' : 'rose'}
+          glow={profitFactor >= 1.5 ? 'emerald' : 'gold'}
         />
 
         <StatCard 
@@ -285,9 +318,10 @@ export const Dashboard = () => {
           value={`-${maxDrawdownPct.toFixed(2)}%`}
           subtitle={`Discipline Score: ${disciplineScore}/100`}
           trend={maxDrawdownPct < 5 ? 'up' : maxDrawdownPct < 15 ? 'neutral' : 'down'}
-          trendValue={maxDrawdownPct < 10 ? 'Safe' : 'Watch SL'}
+          trendValue={maxDrawdownPct < 10 ? 'Safe' : 'Watch Risk'}
           icon={<Activity className="w-4 h-4" />}
           accentColor={maxDrawdownPct < 10 ? 'indigo' : 'rose'}
+          glow={maxDrawdownPct >= 15 ? 'rose' : undefined}
         />
       </div>
 
@@ -338,8 +372,8 @@ export const Dashboard = () => {
             {chartData.length === 0 ? (
               <div className="h-[300px] flex items-center justify-center">
                 <EmptyState 
-                  title="Belum Ada Histori Transaksi" 
-                  description="Jalankan MT5 Sync atau tambahkan transaksi manual untuk melihat grafik perkembangan akun Anda."
+                  title="Belum Ada Histori Transaksi Ditutup" 
+                  description="Jalankan MT5 Sync atau input transaksi untuk memetakan kurva perkembangan akun Anda."
                   action={
                     user && (
                       <Link to="/trades/new" className="glass-button text-xs py-1.5 px-3 text-amber-300 border-amber-500/30">
@@ -353,61 +387,118 @@ export const Dashboard = () => {
               <div className="h-[320px] w-full pt-2">
                 <ResponsiveContainer width="100%" height="100%">
                   {chartMode === 'equity' ? (
-                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
                       <defs>
-                        <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#d4af37" stopOpacity={0.25}/>
-                          <stop offset="95%" stopColor="#d4af37" stopOpacity={0.0}/>
+                        <linearGradient id="equityGradientProfit" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
                         </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                      <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} />
-                      <YAxis stroke="#64748b" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} />
-                      <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: '#0c0f17', 
-                          borderColor: 'rgba(255,255,255,0.1)', 
-                          borderRadius: '0.75rem',
-                          color: '#fff',
-                          fontSize: '12px',
-                          boxShadow: '0 8px 30px rgba(0,0,0,0.6)'
-                        }} 
-                        formatter={(val: any) => [`$${Number(val).toFixed(2)}`, 'Balance']}
-                      />
-                      <Area type="monotone" dataKey="equity" stroke="#d4af37" strokeWidth={2} fillOpacity={1} fill="url(#equityGradient)" />
-                    </AreaChart>
-                  ) : chartMode === 'pnl' ? (
-                    <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                      <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} />
-                      <YAxis stroke="#64748b" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
-                      <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: '#0c0f17', 
-                          borderColor: 'rgba(255,255,255,0.1)', 
-                          borderRadius: '0.75rem',
-                          color: '#fff',
-                          fontSize: '12px'
-                        }}
-                        formatter={(val: any) => [`$${Number(val).toFixed(2)}`, 'Net P&L']}
-                      />
-                      <Bar 
-                        dataKey="pnl" 
-                        fill="#10b981"
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  ) : (
-                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="ddGradient" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id="equityGradientLoss" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/>
                           <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0}/>
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                      <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} />
-                      <YAxis stroke="#64748b" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                      <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} />
+                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} />
+                      
+                      <ReferenceLine 
+                        y={initialCapital} 
+                        stroke="#64748b" 
+                        strokeDasharray="4 4" 
+                        label={{ value: `Base $${initialCapital.toLocaleString()}`, fill: '#94a3b8', fontSize: 10, position: 'insideTopLeft' }} 
+                      />
+
+                      <Tooltip 
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            const diff = data.equity - initialCapital;
+                            const isAbove = diff >= 0;
+                            return (
+                              <div className="bg-[#0c0f17] border border-white/10 rounded-xl p-3 shadow-2xl text-xs font-mono">
+                                <div className="text-slate-400 mb-1">{data.date} {data.pair ? `• ${data.pair}` : ''}</div>
+                                <div className="text-sm font-bold text-white mb-1">
+                                  Balance: ${data.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                </div>
+                                <div className={`text-xs font-semibold ${isAbove ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  Net Return: {isAbove ? '+' : ''}${diff.toFixed(2)} ({((diff / initialCapital) * 100).toFixed(2)}%)
+                                </div>
+                                {data.drawdown > 0 && (
+                                  <div className="text-[11px] text-rose-400/90 mt-0.5">
+                                    Drawdown: -{data.drawdown}%
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="equity" 
+                        stroke={isProfitablePortfolio ? '#10b981' : '#f43f5e'} 
+                        strokeWidth={2} 
+                        fillOpacity={1} 
+                        fill={isProfitablePortfolio ? 'url(#equityGradientProfit)' : 'url(#equityGradientLoss)'} 
+                      />
+                    </AreaChart>
+                  ) : chartMode === 'pnl' ? (
+                    <BarChart data={chartData.filter(d => !d.isStart)} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                      <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} />
+                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
+                      
+                      <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="3 3" />
+                      
+                      <Tooltip 
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            const isWin = data.pnl >= 0;
+                            return (
+                              <div className="bg-[#0c0f17] border border-white/10 rounded-xl p-3 shadow-2xl text-xs font-mono">
+                                <div className="text-slate-400 mb-1">{data.date} • {data.pair}</div>
+                                <div className={`text-sm font-bold flex items-center gap-1.5 ${isWin ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  <span>{isWin ? 'PROFIT' : 'LOSS'}:</span>
+                                  <span>{isWin ? '+' : ''}${data.pnl.toFixed(2)}</span>
+                                </div>
+                                <div className="text-[11px] text-slate-400 mt-1">
+                                  Result: {data.result || (isWin ? 'Win' : 'Loss')} ({data.direction})
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar 
+                        dataKey="pnl" 
+                        radius={[4, 4, 0, 0]}
+                      >
+                        {chartData.filter(d => !d.isStart).map((entry, index) => (
+                          <Cell 
+                            key={`pnl-bar-${index}`} 
+                            fill={entry.pnl >= 0 ? '#10b981' : '#f43f5e'} 
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  ) : (
+                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="ddGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.35}/>
+                          <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                      <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} />
+                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                      
+                      <ReferenceLine y={5} stroke="#eab308" strokeDasharray="3 3" label={{ value: '5% Risk Threshold', fill: '#eab308', fontSize: 10 }} />
+
                       <Tooltip 
                         contentStyle={{ 
                           backgroundColor: '#0c0f17', 
@@ -416,7 +507,7 @@ export const Dashboard = () => {
                           color: '#fff',
                           fontSize: '12px'
                         }} 
-                        formatter={(val: any) => [`-${Number(val).toFixed(2)}%`, 'Drawdown']}
+                        formatter={(val: any) => [`-${Number(val).toFixed(2)}%`, 'Peak Drawdown']}
                       />
                       <Area type="monotone" dataKey="drawdown" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#ddGradient)" />
                     </AreaChart>
@@ -622,7 +713,7 @@ export const Dashboard = () => {
       <PositionCalculatorModal 
         isOpen={isCalculatorOpen}
         onClose={() => setIsCalculatorOpen(false)}
-        defaultBalance={currentBalance}
+        defaultBalance={liveEquity}
       />
 
     </div>

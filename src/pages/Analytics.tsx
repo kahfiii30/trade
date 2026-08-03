@@ -242,7 +242,9 @@ export const Analytics = () => {
                     Active
                   </span>
                 </div>
-                <div className="text-2xl font-mono font-bold text-white">
+                <div className={`text-2xl font-mono font-bold ${
+                  sessionStats.london.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}>
                   {sessionStats.london.pnl >= 0 ? '+' : ''}${sessionStats.london.pnl.toFixed(2)}
                 </div>
                 <div className="pt-2 border-t border-white/[0.04] flex justify-between text-xs text-slate-400 font-mono">
@@ -259,7 +261,9 @@ export const Analytics = () => {
                     High Volatility
                   </span>
                 </div>
-                <div className="text-2xl font-mono font-bold text-white">
+                <div className={`text-2xl font-mono font-bold ${
+                  sessionStats.ny.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}>
                   {sessionStats.ny.pnl >= 0 ? '+' : ''}${sessionStats.ny.pnl.toFixed(2)}
                 </div>
                 <div className="pt-2 border-t border-white/[0.04] flex justify-between text-xs text-slate-400 font-mono">
@@ -276,7 +280,9 @@ export const Analytics = () => {
                     Consolidation
                   </span>
                 </div>
-                <div className="text-2xl font-mono font-bold text-white">
+                <div className={`text-2xl font-mono font-bold ${
+                  sessionStats.asian.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}>
                   {sessionStats.asian.pnl >= 0 ? '+' : ''}${sessionStats.asian.pnl.toFixed(2)}
                 </div>
                 <div className="pt-2 border-t border-white/[0.04] flex justify-between text-xs text-slate-400 font-mono">
@@ -347,12 +353,19 @@ export const Analytics = () => {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.03)" />
                     <XAxis dataKey="day" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} fontFamily="JetBrains Mono" />
                     <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} fontFamily="JetBrains Mono" tickFormatter={(v) => `$${v}`} />
-                    <ReferenceLine y={0} stroke="#475569" strokeDasharray="2 2" />
+                    <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="3 3" />
                     <Tooltip 
                       contentStyle={{ backgroundColor: '#0c0f17', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
                       formatter={(v: any) => [`${Number(v) >= 0 ? '+' : ''}$${Number(v).toFixed(2)}`, 'Net PnL']}
                     />
-                    <Bar dataKey="pnl" fill="#d4af37" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                      {dayData.map((entry, index) => (
+                        <Cell 
+                          key={`analytics-day-${index}`} 
+                          fill={entry.pnl >= 0 ? '#10b981' : '#f43f5e'} 
+                        />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
