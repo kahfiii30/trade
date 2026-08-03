@@ -15,11 +15,21 @@ import {
   LayoutGrid, 
   Table as TableIcon,
   ArrowUpRight, 
-  ArrowDownRight
+  ArrowDownRight,
+  RotateCcw
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { TradeDetailsModal } from '../components/TradeDetailsModal';
 import { PORTFOLIO_USER_ID } from '../lib/constants';
+import { 
+  getTradeDate, 
+  getTradeLot, 
+  getTradeNetPnL, 
+  getTradeGrossPnL,
+  getTradeFee,
+  isTradeWin, 
+  isTradeLoss 
+} from '../utils/tradeUtils';
 
 export const JournalTable = () => {
   const { user } = useAuth();
@@ -27,38 +37,57 @@ export const JournalTable = () => {
   const { showToast } = useToast();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDirection, setFilterDirection] = useState<'ALL' | 'Long' | 'Short'>('ALL');
-  const [filterResult, setFilterResult] = useState<'ALL' | 'Win' | 'Loss' | 'BE'>('ALL');
-  const [sortField, setSortField] = useState<keyof Trade>('close_time');
+  const [filterResult, setFilterResult] = useState<'ALL' | 'Win' | 'Loss' | 'BE' | 'Pending'>('ALL');
+  const [sortField, setSortField] = useState<string>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
+  const targetUserId = user?.id || PORTFOLIO_USER_ID;
+
+  const fetchTrades = async (silent = false) => {
+    if (!silent) setIsRefreshing(true);
+    try {
+      const { data, error } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('user_id', targetUserId)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+      setTrades(data || []);
+    } catch (error) {
+      console.error('Error fetching trades:', error);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    const targetUserId = user?.id || PORTFOLIO_USER_ID;
+    fetchTrades(true);
 
-    const fetchTrades = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('trades')
-          .select('*')
-          .eq('user_id', targetUserId)
-          .order('close_time', { ascending: false });
+    // Realtime channel to automatically detect MT5 sync / new inserts
+    const channel = supabase
+      .channel('journal-trades-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trades' },
+        () => {
+          fetchTrades(true);
+        }
+      )
+      .subscribe();
 
-        if (error) throw error;
-        setTrades(data || []);
-      } catch (error) {
-        console.error('Error fetching trades:', error);
-      } finally {
-        setIsLoading(false);
-      }
+    return () => {
+      supabase.removeChannel(channel);
     };
-
-    fetchTrades();
-  }, [user]);
+  }, [targetUserId]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -87,8 +116,19 @@ export const JournalTable = () => {
 
       return matchesSearch && matchesDirection && matchesResult;
     }).sort((a, b) => {
-      let aVal = a[sortField];
-      let bVal = b[sortField];
+      let aVal: any = a[sortField as keyof Trade];
+      let bVal: any = b[sortField as keyof Trade];
+
+      if (sortField === 'date' || sortField === 'close_time') {
+        aVal = new Date(getTradeDate(a)).getTime();
+        bVal = new Date(getTradeDate(b)).getTime();
+      } else if (sortField === 'pnl' || sortField === 'pnl_nominal') {
+        aVal = getTradeNetPnL(a);
+        bVal = getTradeNetPnL(b);
+      } else if (sortField === 'lot' || sortField === 'position_size') {
+        aVal = getTradeLot(a);
+        bVal = getTradeLot(b);
+      }
 
       if (aVal === undefined || aVal === null) return 1;
       if (bVal === undefined || bVal === null) return -1;
@@ -102,10 +142,10 @@ export const JournalTable = () => {
   }, [trades, searchTerm, filterDirection, filterResult, sortField, sortOrder]);
 
   // Realtime Filtered Metrics
-  const filteredPnL = filteredTrades.reduce((acc, t) => acc + (Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0)), 0);
-  const filteredWins = filteredTrades.filter(t => t.result === 'Win').length;
+  const filteredPnL = filteredTrades.reduce((acc, t) => acc + getTradeNetPnL(t), 0);
+  const filteredWins = filteredTrades.filter(t => isTradeWin(t)).length;
   const filteredWinRate = filteredTrades.length > 0 ? (filteredWins / filteredTrades.length) * 100 : 0;
-  const filteredLots = filteredTrades.reduce((acc, t) => acc + Number(t.lot || 0), 0);
+  const filteredLots = filteredTrades.reduce((acc, t) => acc + getTradeLot(t), 0);
 
   // 1-Click Export to CSV
   const handleExportCSV = () => {
@@ -114,22 +154,21 @@ export const JournalTable = () => {
       return;
     }
 
-    const headers = ['Pair', 'Direction', 'Lot', 'Open Time', 'Close Time', 'Entry Price', 'Exit Price', 'SL', 'TP', 'Gross PnL', 'Commission', 'Swap', 'Net PnL', 'Result', 'RR Realized', 'Notes'];
+    const headers = ['Pair', 'Direction', 'Lot', 'Open Time', 'Date / Close Time', 'Entry Price', 'Exit Price', 'SL', 'TP', 'Gross PnL', 'Fee', 'Net PnL', 'Result', 'RR Realized', 'Notes'];
     
     const rows = filteredTrades.map(t => [
       t.pair,
       t.direction,
-      t.lot,
+      getTradeLot(t),
       t.open_time || '',
-      t.close_time || '',
+      getTradeDate(t),
       t.entry_price || '',
       t.exit_price || '',
       t.stop_loss || '',
       t.take_profit || '',
-      t.pnl,
-      t.commission || 0,
-      t.swap || 0,
-      (Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0)).toFixed(2),
+      getTradeGrossPnL(t),
+      getTradeFee(t),
+      getTradeNetPnL(t).toFixed(2),
       t.result || '',
       t.rr_realized || '',
       `"${(t.notes || '').replace(/"/g, '""')}"`
@@ -146,7 +185,7 @@ export const JournalTable = () => {
     showToast('Export CSV berhasil diunduh!');
   };
 
-  const handleSort = (field: keyof Trade) => {
+  const handleSort = (field: string) => {
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
@@ -174,6 +213,15 @@ export const JournalTable = () => {
         description="Comprehensive historical trade records, execution metrics & algorithmic review."
         action={
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => fetchTrades(false)}
+              disabled={isRefreshing}
+              className="glass-button text-xs py-1.5 px-3 text-slate-300 hover:text-white flex items-center gap-1.5"
+              title="Refresh / Sync Data"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 text-cyan-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
+            </button>
             <button
               onClick={handleExportCSV}
               className="glass-button text-xs py-1.5 px-3 text-slate-300 hover:text-white flex items-center gap-1.5"
@@ -257,7 +305,7 @@ export const JournalTable = () => {
 
           {/* Result Filter */}
           <div className="flex items-center bg-white/[0.03] p-1 rounded-xl border border-white/[0.06] text-xs">
-            {(['ALL', 'Win', 'Loss', 'BE'] as const).map((res) => (
+            {(['ALL', 'Win', 'Loss', 'BE', 'Pending'] as const).map((res) => (
               <button
                 key={res}
                 onClick={() => setFilterResult(res)}
@@ -267,7 +315,7 @@ export const JournalTable = () => {
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {res === 'ALL' ? 'All Results' : res}
+                {res === 'ALL' ? 'All Results' : res === 'Pending' ? 'Open / Running' : res}
               </button>
             ))}
           </div>
@@ -312,14 +360,16 @@ export const JournalTable = () => {
             <table className="w-full text-left text-xs font-mono">
               <thead className="bg-white/[0.02] border-b border-white/[0.05] text-slate-400 text-[11px] uppercase tracking-wider font-sans">
                 <tr>
-                  <th className="py-3 px-4 cursor-pointer hover:text-white" onClick={() => handleSort('close_time')}>
+                  <th className="py-3 px-4 cursor-pointer hover:text-white" onClick={() => handleSort('date')}>
                     <div className="flex items-center gap-1">Date <ArrowUpDown className="w-3 h-3" /></div>
                   </th>
                   <th className="py-3 px-4 cursor-pointer hover:text-white" onClick={() => handleSort('pair')}>
                     <div className="flex items-center gap-1">Pair <ArrowUpDown className="w-3 h-3" /></div>
                   </th>
                   <th className="py-3 px-4">Direction</th>
-                  <th className="py-3 px-4">Lots</th>
+                  <th className="py-3 px-4 cursor-pointer hover:text-white" onClick={() => handleSort('lot')}>
+                    <div className="flex items-center gap-1">Lots <ArrowUpDown className="w-3 h-3" /></div>
+                  </th>
                   <th className="py-3 px-4">Entry / Exit</th>
                   <th className="py-3 px-4">R:R</th>
                   <th className="py-3 px-4 text-right cursor-pointer hover:text-white" onClick={() => handleSort('pnl')}>
@@ -331,9 +381,11 @@ export const JournalTable = () => {
               </thead>
               <tbody className="divide-y divide-white/[0.03]">
                 {filteredTrades.map((trade) => {
-                  const netPnL = Number(trade.pnl) - Number(trade.commission || 0) - Number(trade.swap || 0);
-                  const isWin = trade.result === 'Win';
-                  const isLoss = trade.result === 'Loss';
+                  const netPnL = getTradeNetPnL(trade);
+                  const isWin = isTradeWin(trade);
+                  const isLoss = isTradeLoss(trade);
+                  const tradeDate = getTradeDate(trade);
+                  const lot = getTradeLot(trade);
 
                   return (
                     <tr 
@@ -342,7 +394,7 @@ export const JournalTable = () => {
                       className="hover:bg-white/[0.03] transition-colors cursor-pointer group"
                     >
                       <td className="py-3 px-4 text-slate-300">
-                        {trade.close_time ? new Date(trade.close_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                        {tradeDate ? new Date(tradeDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                       </td>
                       <td className="py-3 px-4 font-bold text-white group-hover:text-amber-300 transition-colors">
                         {trade.pair}
@@ -357,7 +409,7 @@ export const JournalTable = () => {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-slate-300">
-                        {trade.lot}
+                        {lot}
                       </td>
                       <td className="py-3 px-4 text-slate-400 text-[11px]">
                         {trade.entry_price || '-'} → {trade.exit_price || '-'}
@@ -374,7 +426,7 @@ export const JournalTable = () => {
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                           isWin ? 'bg-emerald-500/10 text-emerald-400' : isLoss ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-700/30 text-slate-400'
                         }`}>
-                          {trade.result || 'CLOSED'}
+                          {trade.result || (isWin ? 'Win' : isLoss ? 'Loss' : 'BE')}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
@@ -408,9 +460,11 @@ export const JournalTable = () => {
         /* Cyber Grid View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredTrades.map((trade) => {
-            const netPnL = Number(trade.pnl) - Number(trade.commission || 0) - Number(trade.swap || 0);
-            const isWin = trade.result === 'Win';
-            const isLoss = trade.result === 'Loss';
+            const netPnL = getTradeNetPnL(trade);
+            const isWin = isTradeWin(trade);
+            const isLoss = isTradeLoss(trade);
+            const tradeDate = getTradeDate(trade);
+            const lot = getTradeLot(trade);
 
             return (
               <div 
@@ -434,7 +488,7 @@ export const JournalTable = () => {
                         </span>
                       </div>
                       <span className="text-[11px] font-mono text-slate-400 mt-1 block">
-                        {trade.close_time ? new Date(trade.close_time).toLocaleDateString() : '-'}
+                        {tradeDate ? new Date(tradeDate).toLocaleDateString() : '-'}
                       </span>
                     </div>
 
@@ -448,7 +502,7 @@ export const JournalTable = () => {
                       <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded inline-block mt-0.5 ${
                         isWin ? 'bg-emerald-500/10 text-emerald-400' : isLoss ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-700/30 text-slate-400'
                       }`}>
-                        {trade.result || 'CLOSED'}
+                        {trade.result || (isWin ? 'Win' : isLoss ? 'Loss' : 'BE')}
                       </span>
                     </div>
                   </div>
@@ -461,7 +515,7 @@ export const JournalTable = () => {
                 </div>
 
                 <div className="pt-3 border-t border-white/[0.04] flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                  <span>Lots: {trade.lot}</span>
+                  <span>Lots: {lot}</span>
                   <span>R:R {trade.rr_realized ? `1:${trade.rr_realized}` : '-'}</span>
                   {user && (
                     <button

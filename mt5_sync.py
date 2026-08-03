@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import urllib.request
 from urllib.error import URLError, HTTPError
@@ -9,7 +10,6 @@ from dotenv import load_dotenv
 # ==========================================
 # KONFIGURASI AKUN TRADE HITOSHI (SUPABASE)
 # ==========================================
-# Script ini akan otomatis membaca .env untuk URL & Key Supabase
 load_dotenv()
 
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL")
@@ -19,7 +19,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     print("Error: VITE_SUPABASE_URL atau VITE_SUPABASE_ANON_KEY tidak ditemukan di file .env")
     exit(1)
 
-# MASUKKAN EMAIL & PASSWORD LOGIN APLIKASI JURNAL ANDA DI SINI
+# EMAIL & PASSWORD LOGIN SUPABASE
 USER_EMAIL = "kulbetfiii@gmail.com"
 USER_PASSWORD = "Bihara2005"
 
@@ -44,10 +44,8 @@ def supabase_login(email, password):
         print(f"Error: {e}")
         return None, None
 
-def check_trade_exists(token, position_id, ticket):
-    # Cek berdasarkan exact ticket (format baru) atau exact position_id (format lama)
-    # Menggunakan format lama agar trade yang sudah disinkronisasi sebelumnya tidak duplikat
-    url = f"{SUPABASE_URL}/rest/v1/trades?select=id,notes&notes=like.*{position_id}*"
+def get_trade_by_position_id(token, position_id):
+    url = f"{SUPABASE_URL}/rest/v1/trades?select=id,result,notes&notes=like.*{position_id}*"
     req = urllib.request.Request(url, method='GET')
     req.add_header('apikey', SUPABASE_KEY)
     req.add_header('Authorization', f'Bearer {token}')
@@ -55,15 +53,11 @@ def check_trade_exists(token, position_id, ticket):
     try:
         with urllib.request.urlopen(req) as response:
             res_data = json.loads(response.read().decode())
-            # Jika menggunakan format baru (ada ticket), pastikan notes mengandung ticket tersebut
-            for trade in res_data:
-                if f"Ticket: {ticket}" in trade.get("notes", ""):
-                    return True
-                if trade.get("notes", "") == f"Auto-synced from MT5. Position ID: {position_id}":
-                    return True
-            return False
+            if res_data and len(res_data) > 0:
+                return res_data[0]
+            return None
     except Exception:
-        return False
+        return None
 
 def insert_trade(token, trade_data):
     url = f"{SUPABASE_URL}/rest/v1/trades"
@@ -79,6 +73,25 @@ def insert_trade(token, trade_data):
             return response.status in (201, 204)
     except HTTPError as e:
         print(f"Error Insert: {e.read().decode()}")
+        return False
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
+def update_trade(token, trade_id, update_data):
+    url = f"{SUPABASE_URL}/rest/v1/trades?id=eq.{trade_id}"
+    data = json.dumps(update_data).encode('utf-8')
+    req = urllib.request.Request(url, data=data, method='PATCH')
+    req.add_header('apikey', SUPABASE_KEY)
+    req.add_header('Authorization', f'Bearer {token}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('Prefer', 'return=minimal')
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            return response.status in (200, 204)
+    except HTTPError as e:
+        print(f"Error Update: {e.read().decode()}")
         return False
     except Exception as e:
         print(f"Error: {e}")
@@ -103,107 +116,176 @@ def main():
     # 2. Inisialisasi MetaTrader 5
     print("\nMenghubungkan ke MetaTrader 5...")
     if not mt5.initialize():
-        print("initialize() gagal, memastikan MT5 terbuka. Error code =", mt5.last_error())
+        print("initialize() gagal, pastikan MT5 terbuka. Error code =", mt5.last_error())
         return
         
-    print(f"MT5 Terhubung! Terminal info: {mt5.terminal_info().name}")
+    print(f"MT5 Terhubung! Terminal: {mt5.terminal_info().name}")
 
-    # 3. Ambil Histori Trading (Contoh: 7 hari terakhir)
+    synced_open_count = 0
+    synced_closed_count = 0
+
+    # 3. SINKRONISASI POSISI BERJALAN / OPEN POSITIONS (Status: Pending)
+    print("\n--- Memeriksa Posisi Berjalan (Open Positions) ---")
+    open_positions = mt5.positions_get()
+    if open_positions:
+        print(f"Ditemukan {len(open_positions)} posisi aktif berjalan di MT5.")
+        for p in open_positions:
+            direction = "Long" if p.type == 0 else "Short"
+            market = "Crypto" if ("BTC" in p.symbol.upper() or "ETH" in p.symbol.upper()) else "Forex"
+            
+            # Hitung planned RR
+            risk = abs(p.price_open - p.sl) if (p.sl > 0 and p.sl != p.price_open) else 0
+            reward = abs(p.tp - p.price_open) if p.tp > 0 else 0
+            rr_planned = round(reward / risk, 2) if risk > 0 else 0
+
+            open_time_iso = datetime.fromtimestamp(p.time).isoformat()
+            
+            existing = get_trade_by_position_id(token, p.ticket)
+            if not existing:
+                open_trade_data = {
+                    "user_id": user_id,
+                    "date": open_time_iso,
+                    "pair": p.symbol,
+                    "market": market,
+                    "direction": direction,
+                    "timeframe": "MT5 Sync",
+                    "entry_price": p.price_open,
+                    "exit_price": None,
+                    "stop_loss": p.sl if p.sl > 0 else None,
+                    "take_profit": p.tp if p.tp > 0 else None,
+                    "position_size": p.volume,
+                    "pnl_nominal": p.profit,
+                    "fee": 0,
+                    "result": "Pending",
+                    "rr_planned": rr_planned,
+                    "rr_realized": None,
+                    "notes": f"Auto-synced from MT5 (Running/Open). Position ID: {p.ticket} | Ticket: {p.ticket}"
+                }
+                if insert_trade(token, open_trade_data):
+                    print(f"[+] Posisi Berjalan Ditambahkan: {direction} {p.volume} {p.symbol} @ {p.price_open} | Floating: ${p.profit:.2f}")
+                    synced_open_count += 1
+            else:
+                if existing.get('result') == 'Pending':
+                    update_data = {
+                        "pnl_nominal": p.profit,
+                        "stop_loss": p.sl if p.sl > 0 else None,
+                        "take_profit": p.tp if p.tp > 0 else None
+                    }
+                    if update_trade(token, existing['id'], update_data):
+                        print(f"[*] Posisi Berjalan Diperbarui: {p.symbol} (ID: {p.ticket}) | Floating: ${p.profit:.2f}")
+    else:
+        print("Tidak ada posisi berjalan yang aktif saat ini.")
+
+    # 4. SINKRONISASI HISTORI TRANSAKSI YANG SUDAH DITUTUP
+    days_back = 7
+    if len(sys.argv) > 1:
+        try:
+            days_back = int(sys.argv[1])
+        except ValueError:
+            pass
+            
     now = datetime.now()
-    date_from = now - timedelta(days=7) # Ubah ke days=1 jika ingin sinkronisasi harian saja
+    date_from = now - timedelta(days=days_back)
     
-    print(f"Mengambil histori transaksi dari {date_from.strftime('%Y-%m-%d')} sampai sekarang...")
-    # Tambahkan timedelta(days=1) ke now untuk memastikan perbedaan timezone broker tidak menyebabkan trade terbaru terlewat
+    print(f"\n--- Mengambil Histori Deals ({days_back} hari terakhir) ---")
     deals = mt5.history_deals_get(date_from, now + timedelta(days=1))
     
     if deals is None:
-        print("Tidak ada deal yang ditemukan, error code =", mt5.last_error())
-        mt5.shutdown()
-        return
-
-    print(f"Ditemukan {len(deals)} transaksi di MT5.")
-    synced_count = 0
-    
-    # 4. Proses Transaksi (Filter hanya transaksi yang DITUTUP / DEAL_ENTRY_OUT)
-    for deal in deals:
-        if deal.entry != 1:
-            print(f"[-] Transaksi {deal.ticket} dilewati: Bukan transaksi penutupan (deal.entry={deal.entry})")
-            continue
-            
-        if deal.type not in [0, 1]: 
-            print(f"[-] Transaksi {deal.ticket} dilewati: Tipe bukan Buy/Sell (deal.type={deal.type})")
-            continue
-
-        direction = "Short" if deal.type == 0 else "Long"
-        pnl = deal.profit
-        fee = deal.commission + deal.swap
-        
-        if pnl > 0: result = "Win"
-        elif pnl < 0: result = "Loss"
-        else: result = "BE"
-            
-        close_time = datetime.fromtimestamp(deal.time).isoformat()
-        
-        # Ambil data order untuk mendapatkan Entry Price, SL, dan TP
-        orders = mt5.history_orders_get(position=deal.position_id)
-        entry_price = 0
-        sl = 0
-        tp = 0
-        rr_planned = 0
-        rr_realized = 0
-
-        if orders and len(orders) > 0:
-            # Order pertama biasanya adalah order entry
-            entry_order = orders[0]
-            entry_price = entry_order.price_open
-            sl = entry_order.sl
-            tp = entry_order.tp
-
-            # Kalkulasi RR
-            if entry_price > 0 and sl > 0 and sl != entry_price:
-                risk = abs(entry_price - sl)
+        print("Tidak ada deal histori yang ditemukan, error code =", mt5.last_error())
+    else:
+        print(f"Ditemukan {len(deals)} transaksi di histori MT5.")
+        for deal in deals:
+            # Lewati deal balance deposit/withdrawal atau entry-in jika posisinya sudah ditutup
+            if deal.entry != 1:
+                continue
                 
-                if tp > 0:
-                    reward = abs(tp - entry_price)
-                    rr_planned = round(reward / risk, 2)
-                    
-                realized_reward = abs(deal.price - entry_price)
-                if pnl > 0:
-                    rr_realized = round(realized_reward / risk, 2)
-                elif pnl < 0:
-                    rr_realized = round(-realized_reward / risk, 2)
+            if deal.type not in [0, 1]: 
+                continue
 
-        trade_data = {
-            "user_id": user_id,
-            "date": close_time,
-            "pair": deal.symbol,
-            "market": "Forex", 
-            "direction": direction,
-            "timeframe": "MT5 Sync",
-            "entry_price": entry_price,
-            "exit_price": deal.price,
-            "stop_loss": sl,
-            "take_profit": tp,
-            "position_size": deal.volume,
-            "pnl_nominal": pnl,
-            "fee": fee,
-            "result": result,
-            "rr_planned": rr_planned,
-            "rr_realized": rr_realized,
-            "notes": f"Auto-synced from MT5. Position ID: {deal.position_id} | Ticket: {deal.ticket}"
-        }
-        
-        # 5. Cek duplikasi & Insert
-        if not check_trade_exists(token, deal.position_id, deal.ticket):
-            if insert_trade(token, trade_data):
-                print(f"[+] Disinkronkan: {direction} {deal.volume} {deal.symbol} | PnL: ${pnl:.2f}")
-                synced_count += 1
+            direction = "Short" if deal.type == 0 else "Long"
+            pnl = deal.profit
+            fee = deal.commission + deal.swap
+            market = "Crypto" if ("BTC" in deal.symbol.upper() or "ETH" in deal.symbol.upper()) else "Forex"
+            
+            if pnl > 0: result = "Win"
+            elif pnl < 0: result = "Loss"
+            else: result = "BE"
+                
+            close_time = datetime.fromtimestamp(deal.time).isoformat()
+            
+            # Ambil data order untuk Entry Price, SL, dan TP
+            orders = mt5.history_orders_get(position=deal.position_id)
+            entry_price = 0
+            sl = 0
+            tp = 0
+            rr_planned = 0
+            rr_realized = 0
+
+            if orders and len(orders) > 0:
+                entry_order = orders[0]
+                entry_price = entry_order.price_open
+                sl = entry_order.sl
+                tp = entry_order.tp
+
+                if entry_price > 0 and sl > 0 and sl != entry_price:
+                    risk = abs(entry_price - sl)
+                    if tp > 0:
+                        reward = abs(tp - entry_price)
+                        rr_planned = round(reward / risk, 2)
+                        
+                    realized_reward = abs(deal.price - entry_price)
+                    if pnl > 0:
+                        rr_realized = round(realized_reward / risk, 2)
+                    elif pnl < 0:
+                        rr_realized = round(-realized_reward / risk, 2)
+
+            existing = get_trade_by_position_id(token, deal.position_id)
+            
+            if not existing:
+                trade_data = {
+                    "user_id": user_id,
+                    "date": close_time,
+                    "pair": deal.symbol,
+                    "market": market, 
+                    "direction": direction,
+                    "timeframe": "MT5 Sync",
+                    "entry_price": entry_price,
+                    "exit_price": deal.price,
+                    "stop_loss": sl,
+                    "take_profit": tp,
+                    "position_size": deal.volume,
+                    "pnl_nominal": pnl,
+                    "fee": fee,
+                    "result": result,
+                    "rr_planned": rr_planned,
+                    "rr_realized": rr_realized,
+                    "notes": f"Auto-synced from MT5. Position ID: {deal.position_id} | Ticket: {deal.ticket}"
+                }
+                if insert_trade(token, trade_data):
+                    print(f"[+] Disinkronkan (Closed): {direction} {deal.volume} {deal.symbol} | PnL: ${pnl:.2f}")
+                    synced_closed_count += 1
+            elif existing.get('result') == 'Pending':
+                # Posisi sebelumnya tercatat sebagai Pending, sekarang sudah ditutup
+                update_data = {
+                    "exit_price": deal.price,
+                    "pnl_nominal": pnl,
+                    "fee": fee,
+                    "result": result,
+                    "rr_realized": rr_realized,
+                    "date": close_time,
+                    "notes": f"Auto-synced from MT5. Position ID: {deal.position_id} | Ticket: {deal.ticket}"
+                }
+                if update_trade(token, existing['id'], update_data):
+                    print(f"[+] Trade Ditutup & Diperbarui: {direction} {deal.symbol} | PnL: ${pnl:.2f} ({result})")
+                    synced_closed_count += 1
             else:
-                print(f"[-] Gagal sinkronisasi {deal.position_id}")
-        else:
-            print(f"[-] Transaksi dilewati: Sudah ada di jurnal (Position ID: {deal.position_id})")
+                print(f"[-] Dilewati: Sudah ada di jurnal (Position ID: {deal.position_id})")
 
-    print(f"\nSinkronisasi selesai! {synced_count} trade baru berhasil ditambahkan ke Jurnal.")
+    print(f"\n==========================================")
+    print(f"Sinkronisasi selesai!")
+    print(f"- Posisi Berjalan (Open): {synced_open_count} baru ditambahkan")
+    print(f"- Transaksi Ditutup (Closed): {synced_closed_count} diproses")
+    print(f"==========================================")
     mt5.shutdown()
 
 if __name__ == "__main__":

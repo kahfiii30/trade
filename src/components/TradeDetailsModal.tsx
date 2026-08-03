@@ -4,6 +4,15 @@ import { X, Sparkles, Loader2, ArrowUpRight, ArrowDownRight, Tag, HeartPulse, Al
 import { Badge } from './ui/Badge';
 import { analyzeTrade } from '../lib/ai';
 import { supabase } from '../lib/supabaseClient';
+import { 
+  getTradeDate, 
+  getTradeLot, 
+  getTradeNetPnL, 
+  getTradeGrossPnL,
+  getTradeFee,
+  isTradeWin, 
+  isTradeLoss 
+} from '../utils/tradeUtils';
 
 interface TradeDetailsModalProps {
   isOpen?: boolean;
@@ -18,11 +27,13 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({ isOpen = t
 
   if (!isOpen || !trade) return null;
 
-  const netPnL = Number(trade.pnl || 0) - Number(trade.commission || 0) - Number(trade.swap || 0);
-  const isWin = netPnL > 0 || trade.result === 'Win';
-  const isLoss = netPnL < 0 || trade.result === 'Loss';
-  const lotSize = trade.lot || 0;
-  const tradeDate = trade.close_time || trade.open_time || new Date().toISOString();
+  const netPnL = getTradeNetPnL(trade);
+  const grossPnL = getTradeGrossPnL(trade);
+  const fee = getTradeFee(trade);
+  const isWin = isTradeWin(trade);
+  const isLoss = isTradeLoss(trade);
+  const lotSize = getTradeLot(trade);
+  const tradeDate = getTradeDate(trade);
 
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
@@ -64,8 +75,8 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({ isOpen = t
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold font-sans text-white tracking-tight">{trade.pair}</h2>
-                <Badge variant={isWin ? 'win' : isLoss ? 'loss' : 'be'}>
-                  {trade.result || 'CLOSED'}
+                <Badge variant={isWin ? 'win' : isLoss ? 'loss' : trade.result === 'Pending' ? 'pending' : 'be'}>
+                  {trade.result || (isWin ? 'Win' : isLoss ? 'Loss' : 'BE')}
                 </Badge>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.04] text-slate-300 border border-white/[0.06]">
                   {lotSize} Lots
@@ -103,9 +114,9 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({ isOpen = t
               </span>
             </div>
             <div>
-              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">Gross PnL / Comm</span>
+              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">Gross PnL / Fee</span>
               <span className="text-sm font-mono text-slate-300 mt-0.5 block">
-                ${Number(trade.pnl || 0).toFixed(2)} / ${Number(trade.commission || 0).toFixed(2)}
+                ${grossPnL.toFixed(2)} / ${fee.toFixed(2)}
               </span>
             </div>
             <div>

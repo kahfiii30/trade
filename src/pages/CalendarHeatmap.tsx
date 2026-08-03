@@ -19,6 +19,12 @@ import {
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, TrendingUp, Award, DollarSign } from 'lucide-react';
 import { cn } from '../utils/cn';
 import { PORTFOLIO_USER_ID } from '../lib/constants';
+import { 
+  getTradeDate, 
+  getTradeNetPnL, 
+  isTradeWin, 
+  isTradeLoss 
+} from '../utils/tradeUtils';
 
 export const CalendarHeatmap = () => {
   const { user } = useAuth();
@@ -34,7 +40,8 @@ export const CalendarHeatmap = () => {
         const { data, error } = await supabase
           .from('trades')
           .select('*')
-          .eq('user_id', targetUserId);
+          .eq('user_id', targetUserId)
+          .order('date', { ascending: true });
           
         if (error) throw error;
         setTrades(data || []);
@@ -60,26 +67,26 @@ export const CalendarHeatmap = () => {
 
   const dailyStats: Record<string, { pnl: number; count: number; wins: number; losses: number }> = {};
   trades.forEach(t => {
-    const tradeTime = t.close_time || t.open_time;
+    const tradeTime = getTradeDate(t);
     if (!tradeTime) return;
     const dateStr = format(new Date(tradeTime), 'yyyy-MM-dd');
-    const net = Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0);
+    const net = getTradeNetPnL(t);
 
     if (!dailyStats[dateStr]) dailyStats[dateStr] = { pnl: 0, count: 0, wins: 0, losses: 0 };
     dailyStats[dateStr].pnl += net;
     dailyStats[dateStr].count += 1;
-    if (t.result === 'Win') dailyStats[dateStr].wins += 1;
-    if (t.result === 'Loss') dailyStats[dateStr].losses += 1;
+    if (isTradeWin(t)) dailyStats[dateStr].wins += 1;
+    if (isTradeLoss(t)) dailyStats[dateStr].losses += 1;
   });
 
   // Calculate monthly summary
   const currentMonthTrades = trades.filter(t => {
-    const tradeTime = t.close_time || t.open_time;
+    const tradeTime = getTradeDate(t);
     return tradeTime && isSameMonth(new Date(tradeTime), currentDate);
   });
   
   const monthlyPnL = currentMonthTrades.reduce((sum, t) => {
-    return sum + (Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0));
+    return sum + getTradeNetPnL(t);
   }, 0);
   const monthlyTradesCount = currentMonthTrades.length;
 

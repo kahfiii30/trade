@@ -17,7 +17,8 @@ import {
   ChevronRight, 
   Clock, 
   Calculator,
-  Compass
+  Compass,
+  RotateCcw
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -35,6 +36,13 @@ import { TradeDetailsModal } from '../components/TradeDetailsModal';
 import { PositionCalculatorModal } from '../components/PositionCalculatorModal';
 import { PORTFOLIO_USER_ID } from '../lib/constants';
 import { Link } from 'react-router-dom';
+import { 
+  getTradeDate, 
+  getTradeLot, 
+  getTradeNetPnL, 
+  isTradeWin, 
+  isTradeLoss 
+} from '../utils/tradeUtils';
 
 export const Dashboard = () => {
   const { user } = useAuth();
@@ -44,52 +52,70 @@ export const Dashboard = () => {
   const [chartMode, setChartMode] = useState<'equity' | 'pnl' | 'drawdown'>('equity');
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const targetUserId = user?.id || PORTFOLIO_USER_ID;
+
+  const fetchData = async (silent = false) => {
+    if (!silent) setIsRefreshing(true);
+    try {
+      const { data: settingsData } = await supabase
+        .from('settings')
+        .select('initial_capital')
+        .eq('user_id', targetUserId)
+        .single();
+      
+      if (settingsData?.initial_capital) {
+        setInitialCapital(Number(settingsData.initial_capital));
+      }
+
+      const { data: tradesData, error } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('user_id', targetUserId)
+        .order('date', { ascending: true });
+
+      if (error) throw error;
+      setTrades(tradesData || []);
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    const targetUserId = user?.id || PORTFOLIO_USER_ID;
+    fetchData(true);
 
-    const fetchData = async () => {
-      try {
-        const { data: settingsData } = await supabase
-          .from('settings')
-          .select('initial_capital')
-          .eq('user_id', targetUserId)
-          .single();
-        
-        if (settingsData?.initial_capital) {
-          setInitialCapital(Number(settingsData.initial_capital));
+    const channel = supabase
+      .channel('dashboard-trades-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trades' },
+        () => {
+          fetchData(true);
         }
+      )
+      .subscribe();
 
-        const { data: tradesData, error } = await supabase
-          .from('trades')
-          .select('*')
-          .eq('user_id', targetUserId)
-          .order('close_time', { ascending: true });
-
-        if (error) throw error;
-        setTrades(tradesData || []);
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
-      } finally {
-        setIsLoading(false);
-      }
+    return () => {
+      supabase.removeChannel(channel);
     };
-
-    fetchData();
-  }, [user]);
+  }, [targetUserId]);
 
   // Derived Performance Metrics
   const totalTrades = trades.length;
-  const winningTrades = trades.filter(t => t.result === 'Win');
-  const losingTrades = trades.filter(t => t.result === 'Loss');
+  const winningTrades = trades.filter(t => isTradeWin(t));
+  const losingTrades = trades.filter(t => isTradeLoss(t));
   const winRate = totalTrades > 0 ? (winningTrades.length / totalTrades) * 100 : 0;
   
-  const totalNetPnL = trades.reduce((acc, t) => acc + (Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0)), 0);
+  const totalNetPnL = trades.reduce((acc, t) => acc + getTradeNetPnL(t), 0);
   const currentBalance = initialCapital + totalNetPnL;
   const returnPercentage = initialCapital > 0 ? (totalNetPnL / initialCapital) * 100 : 0;
 
-  const totalGrossProfit = winningTrades.reduce((acc, t) => acc + Number(t.pnl), 0);
-  const totalGrossLoss = Math.abs(losingTrades.reduce((acc, t) => acc + Number(t.pnl), 0));
+  const totalGrossProfit = winningTrades.reduce((acc, t) => acc + Math.max(0, getTradeNetPnL(t)), 0);
+  const totalGrossLoss = Math.abs(losingTrades.reduce((acc, t) => acc + Math.min(0, getTradeNetPnL(t)), 0));
   const profitFactor = totalGrossLoss > 0 ? (totalGrossProfit / totalGrossLoss) : (totalGrossProfit > 0 ? 99.9 : 0);
 
   const avgWin = winningTrades.length > 0 ? totalGrossProfit / winningTrades.length : 0;
@@ -104,11 +130,11 @@ export const Dashboard = () => {
   };
 
   trades.forEach(t => {
-    const tradeTime = t.close_time || t.open_time || t.date || new Date().toISOString();
+    const tradeTime = getTradeDate(t);
     const d = new Date(tradeTime);
     const hour = d.getUTCHours();
-    const net = Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0);
-    const isWin = t.result === 'Win';
+    const net = getTradeNetPnL(t);
+    const isWin = isTradeWin(t);
 
     if (hour >= 0 && hour < 8) {
       sessionStats.asian.trades++;
@@ -131,7 +157,7 @@ export const Dashboard = () => {
   let maxDrawdownPct = 0;
 
   const chartData = trades.map((trade) => {
-    const netPnL = Number(trade.pnl) - Number(trade.commission || 0) - Number(trade.swap || 0);
+    const netPnL = getTradeNetPnL(trade);
     runningBalance += netPnL;
     
     if (runningBalance > peakBalance) {
@@ -144,7 +170,8 @@ export const Dashboard = () => {
       maxDrawdownPct = currentDrawdownPct;
     }
 
-    const dateStr = trade.close_time ? new Date(trade.close_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+    const tradeDate = getTradeDate(trade);
+    const dateStr = tradeDate ? new Date(tradeDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
 
     return {
       date: dateStr,
@@ -193,8 +220,17 @@ export const Dashboard = () => {
 
         <div className="flex items-center gap-2.5">
           <button
+            onClick={() => fetchData(false)}
+            disabled={isRefreshing}
+            className="glass-button text-xs py-1.5 px-3 text-slate-300 hover:text-white flex items-center gap-1.5"
+            title="Refresh Data"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 text-cyan-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
+          </button>
+          <button
             onClick={() => setIsCalculatorOpen(true)}
-            className="glass-button text-xs py-1.5 px-3 text-slate-300 hover:text-amber-300"
+            className="glass-button text-xs py-1.5 px-3 text-slate-300 hover:text-amber-300 flex items-center gap-1.5"
           >
             <Calculator className="w-3.5 h-3.5 text-amber-400" />
             <span>Lot Calculator</span>
@@ -513,9 +549,11 @@ export const Dashboard = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {trades.slice(-6).reverse().map((trade) => {
-              const netPnL = Number(trade.pnl) - Number(trade.commission || 0) - Number(trade.swap || 0);
-              const isWin = trade.result === 'Win';
-              const isLoss = trade.result === 'Loss';
+              const netPnL = getTradeNetPnL(trade);
+              const isWin = isTradeWin(trade);
+              const isLoss = isTradeLoss(trade);
+              const tradeDate = getTradeDate(trade);
+              const lot = getTradeLot(trade);
 
               return (
                 <div 
@@ -537,12 +575,12 @@ export const Dashboard = () => {
                           {trade.direction?.toUpperCase()}
                         </span>
                         <span className="text-[10px] font-mono text-slate-400">
-                          {trade.lot} Lots
+                          {lot} Lots
                         </span>
                       </div>
                       <div className="flex items-center gap-1 text-[11px] text-slate-400 mt-1">
                         <Clock className="w-3 h-3 text-slate-400" />
-                        <span>{trade.close_time ? new Date(trade.close_time).toLocaleDateString() : '-'}</span>
+                        <span>{tradeDate ? new Date(tradeDate).toLocaleDateString() : '-'}</span>
                       </div>
                     </div>
 
@@ -556,7 +594,7 @@ export const Dashboard = () => {
                       <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded inline-block mt-0.5 ${
                         isWin ? 'bg-emerald-500/10 text-emerald-400' : isLoss ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-700/30 text-slate-400'
                       }`}>
-                        {trade.result || 'CLOSED'}
+                        {trade.result || (isWin ? 'Win' : isLoss ? 'Loss' : 'BE')}
                       </span>
                     </div>
                   </div>

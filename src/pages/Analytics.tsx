@@ -20,6 +20,13 @@ import {
   Layers
 } from 'lucide-react';
 import { PORTFOLIO_USER_ID } from '../lib/constants';
+import { 
+  getTradeDate, 
+  getTradeNetPnL, 
+  isTradeWin, 
+  isTradeLoss, 
+  isTradeBE 
+} from '../utils/tradeUtils';
 
 export const Analytics = () => {
   const { user } = useAuth();
@@ -35,7 +42,7 @@ export const Analytics = () => {
           .from('trades')
           .select('*')
           .eq('user_id', targetUserId)
-          .order('close_time', { ascending: true });
+          .order('date', { ascending: true });
           
         if (error) throw error;
         setTrades(data || []);
@@ -61,12 +68,12 @@ export const Analytics = () => {
   }
 
   // Analytics Processing
-  const winTrades = trades.filter(t => t.result === 'Win' || Number(t.pnl) > 0);
-  const lossTrades = trades.filter(t => t.result === 'Loss' || Number(t.pnl) < 0);
-  const beTrades = trades.filter(t => t.result === 'BE' || Number(t.pnl) === 0);
+  const winTrades = trades.filter(t => isTradeWin(t));
+  const lossTrades = trades.filter(t => isTradeLoss(t));
+  const beTrades = trades.filter(t => isTradeBE(t));
 
-  const grossProfit = winTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
-  const grossLoss = Math.abs(lossTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0));
+  const grossProfit = winTrades.reduce((sum, t) => sum + Math.max(0, getTradeNetPnL(t)), 0);
+  const grossLoss = Math.abs(lossTrades.reduce((sum, t) => sum + Math.min(0, getTradeNetPnL(t)), 0));
   const netPnL = grossProfit - grossLoss;
   const winRate = trades.length > 0 ? ((winTrades.length / trades.length) * 100).toFixed(1) : '0.0';
 
@@ -81,10 +88,10 @@ export const Analytics = () => {
   const pairStats: Record<string, { pnl: number; count: number; wins: number }> = {};
   trades.forEach(t => {
     if (!pairStats[t.pair]) pairStats[t.pair] = { pnl: 0, count: 0, wins: 0 };
-    const net = Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0);
+    const net = getTradeNetPnL(t);
     pairStats[t.pair].pnl += net;
     pairStats[t.pair].count += 1;
-    if (t.result === 'Win') pairStats[t.pair].wins += 1;
+    if (isTradeWin(t)) pairStats[t.pair].wins += 1;
   });
 
   const pairData = Object.keys(pairStats).map(pair => ({
@@ -102,11 +109,11 @@ export const Analytics = () => {
   };
 
   trades.forEach(t => {
-    const tradeTime = t.close_time || t.open_time || t.date || new Date().toISOString();
+    const tradeTime = getTradeDate(t);
     const d = new Date(tradeTime);
     const hour = d.getUTCHours();
-    const net = Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0);
-    const isWin = t.result === 'Win';
+    const net = getTradeNetPnL(t);
+    const isWin = isTradeWin(t);
 
     if (hour >= 0 && hour < 8) {
       sessionStats.asian.trades++;
@@ -134,10 +141,10 @@ export const Analytics = () => {
   };
 
   trades.forEach(t => {
-    const tradeTime = t.close_time || t.open_time || t.date || new Date().toISOString();
+    const tradeTime = getTradeDate(t);
     const dayName = days[new Date(tradeTime).getDay()];
     if (dayStats[dayName]) {
-      const net = Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0);
+      const net = getTradeNetPnL(t);
       dayStats[dayName].pnl += net;
       dayStats[dayName].count += 1;
     }
@@ -154,7 +161,7 @@ export const Analytics = () => {
   trades.forEach(t => {
     const em = t.emotion || 'Disciplined';
     if (!emotionStats[em]) emotionStats[em] = { pnl: 0, count: 0 };
-    const net = Number(t.pnl) - Number(t.commission || 0) - Number(t.swap || 0);
+    const net = getTradeNetPnL(t);
     emotionStats[em].pnl += net;
     emotionStats[em].count += 1;
   });

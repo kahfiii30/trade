@@ -7,6 +7,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import type { Trade } from '../types/database';
 import { ArrowLeft, Calculator, Target, Activity, HeartPulse, Save } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
+import { PORTFOLIO_USER_ID } from '../lib/constants';
 
 export const TradeFormPage = () => {
   const { id } = useParams();
@@ -43,8 +44,10 @@ export const TradeFormPage = () => {
     notes: ''
   });
 
+  const targetUserId = user?.id || PORTFOLIO_USER_ID;
+
   useEffect(() => {
-    if (id && user) {
+    if (id) {
       const fetchTrade = async () => {
         try {
           const { data, error } = await supabase
@@ -55,12 +58,18 @@ export const TradeFormPage = () => {
             
           if (error) throw error;
           if (data) {
-            const dateObj = new Date(data.date);
-            const formattedDate = new Date(dateObj.getTime() - dateObj.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+            const rawDate = data.date || data.close_time || data.open_time || new Date().toISOString();
+            const dateObj = new Date(rawDate);
+            const formattedDate = !isNaN(dateObj.getTime())
+              ? new Date(dateObj.getTime() - dateObj.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+              : new Date().toISOString().slice(0, 16);
             
             setFormData({
               ...data,
-              date: formattedDate
+              date: formattedDate,
+              position_size: data.position_size !== undefined && data.position_size !== null ? data.position_size : (data.lot || 0.1),
+              pnl_nominal: data.pnl_nominal !== undefined && data.pnl_nominal !== null ? data.pnl_nominal : (data.pnl || 0),
+              fee: data.fee !== undefined && data.fee !== null ? data.fee : (Number(data.commission || 0) + Number(data.swap || 0))
             });
           }
         } catch (error) {
@@ -71,7 +80,7 @@ export const TradeFormPage = () => {
       };
       fetchTrade();
     }
-  }, [id, user]);
+  }, [id, targetUserId]);
 
   const calculateMetrics = () => {
     let { entry_price, stop_loss, take_profit, exit_price, position_size, fee, direction } = formData;
@@ -125,14 +134,54 @@ export const TradeFormPage = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!targetUserId) {
+      showToast('User identification missing. Please sign in.', 'error');
+      return;
+    }
     setIsLoading(true);
 
     try {
+      // Calculate latest metrics before submission
+      let entry_price = Number(formData.entry_price) || 0;
+      let stop_loss = Number(formData.stop_loss) || 0;
+      let take_profit = Number(formData.take_profit) || 0;
+      let exit_price = Number(formData.exit_price) || 0;
+      let position_size = Number(formData.position_size) || 0;
+      let fee = Number(formData.fee) || 0;
+      let direction = formData.direction || 'Long';
+
+      let risk = Math.abs(entry_price - stop_loss);
+      let reward = Math.abs(take_profit - entry_price);
+      let rr_planned = risk > 0 ? reward / risk : (formData.rr_planned || 0);
+
+      let rr_realized = formData.rr_realized || 0;
+      let pnl_nominal = formData.pnl_nominal || 0;
+      let result = formData.result || 'Pending';
+
+      if (exit_price > 0 && entry_price > 0) {
+        let realizedReward = direction === 'Long' ? (exit_price - entry_price) : (entry_price - exit_price);
+        pnl_nominal = (realizedReward * position_size) - fee;
+        rr_realized = risk > 0 ? realizedReward / risk : 0;
+        result = pnl_nominal > 0 ? 'Win' : pnl_nominal < 0 ? 'Loss' : 'BE';
+      }
+
+      const isoDate = formData.date ? new Date(formData.date).toISOString() : new Date().toISOString();
+
       const payload = {
         ...formData,
-        user_id: user.id,
-        date: new Date(formData.date!).toISOString()
+        user_id: targetUserId,
+        date: isoDate,
+        close_time: isoDate,
+        open_time: isoDate,
+        pnl: Number(pnl_nominal.toFixed(2)),
+        pnl_nominal: Number(pnl_nominal.toFixed(2)),
+        lot: position_size,
+        position_size: position_size,
+        fee: fee,
+        commission: fee,
+        rr_planned: Number(rr_planned.toFixed(2)),
+        rr_realized: Number(rr_realized.toFixed(2)),
+        result: result
       };
 
       if (id) {
