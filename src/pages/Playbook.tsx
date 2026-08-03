@@ -1,20 +1,30 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { supabase } from '../lib/supabaseClient';
 import type { Playbook as PlaybookType } from '../types/database';
 import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
-import { BookOpen, CheckCircle, Plus, Edit2, ShieldAlert, Layers } from 'lucide-react';
+import { BookOpen, CheckCircle, Plus, Edit2, Trash2, ShieldAlert, Layers } from 'lucide-react';
 import { PlaybookFormModal } from '../components/PlaybookFormModal';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { PORTFOLIO_USER_ID } from '../lib/constants';
 
 export const Playbook = () => {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [playbooks, setPlaybooks] = useState<PlaybookType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [playbookToEdit, setPlaybookToEdit] = useState<PlaybookType | null>(null);
+  
+  // Delete confirm state
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    playbook?: PlaybookType;
+  }>({ isOpen: false });
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleSaved = (savedPlaybook: PlaybookType) => {
     setPlaybooks(prev => {
@@ -34,6 +44,33 @@ export const Playbook = () => {
   const openEditModal = (playbook: PlaybookType) => {
     setPlaybookToEdit(playbook);
     setIsModalOpen(true);
+  };
+
+  const promptDeletePlaybook = (playbook: PlaybookType) => {
+    setDeleteModal({
+      isOpen: true,
+      playbook,
+    });
+  };
+
+  const handleExecuteDelete = async () => {
+    if (!deleteModal.playbook) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('playbooks')
+        .delete()
+        .eq('id', deleteModal.playbook.id);
+
+      if (error) throw error;
+      setPlaybooks(prev => prev.filter(p => p.id !== deleteModal.playbook?.id));
+      showToast(`Playbook "${deleteModal.playbook.setup_name}" berhasil dihapus.`);
+      setDeleteModal({ isOpen: false });
+    } catch (err: any) {
+      showToast(`Gagal menghapus playbook: ${err.message}`, 'error');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   useEffect(() => {
@@ -121,13 +158,22 @@ export const Playbook = () => {
                     </div>
                   </div>
                   {user && (
-                    <button 
-                      onClick={() => openEditModal(pb)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-amber-300 hover:bg-white/5 transition-colors"
-                      title="Edit Playbook"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button 
+                        onClick={() => openEditModal(pb)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-amber-300 hover:bg-white/5 transition-colors"
+                        title="Edit Playbook"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        onClick={() => promptDeletePlaybook(pb)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                        title="Hapus Playbook"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -177,6 +223,19 @@ export const Playbook = () => {
         playbookToEdit={playbookToEdit}
         onClose={() => setIsModalOpen(false)}
         onSaved={handleSaved}
+      />
+
+      {/* Luxury Confirm Modal for Playbook */}
+      <ConfirmModal
+        isOpen={deleteModal.isOpen}
+        onClose={() => !isDeleting && setDeleteModal({ isOpen: false })}
+        onConfirm={handleExecuteDelete}
+        isLoading={isDeleting}
+        variant="danger"
+        title={`Hapus Playbook "${deleteModal.playbook?.setup_name}"?`}
+        message={`Aturan entry dan invalidasi untuk setup ${deleteModal.playbook?.setup_name} akan dihapus secara permanen.`}
+        confirmText="Ya, Hapus Playbook"
+        cancelText="Batal"
       />
     </div>
   );

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { TradeDetailsModal } from '../components/TradeDetailsModal';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { PORTFOLIO_USER_ID } from '../lib/constants';
 import { 
   getTradeDate, 
@@ -40,6 +41,16 @@ export const JournalTable = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+
+  // Custom Luxury Confirmation Modal State
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    tradeId?: string;
+    tradePair?: string;
+    isAll?: boolean;
+    count?: number;
+  }>({ isOpen: false });
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -89,31 +100,44 @@ export const JournalTable = () => {
     };
   }, [targetUserId]);
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const handlePromptDeleteSingle = (trade: Trade, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Apakah Anda yakin ingin menghapus transaksi ini?')) return;
-
-    try {
-      const { error } = await supabase.from('trades').delete().eq('id', id);
-      if (error) throw error;
-      setTrades(prev => prev.filter(t => t.id !== id));
-      showToast('Transaksi berhasil dihapus.');
-    } catch (error: any) {
-      showToast('Gagal menghapus transaksi: ' + error.message, 'error');
-    }
+    setDeleteModal({
+      isOpen: true,
+      tradeId: trade.id,
+      tradePair: trade.pair || 'Transaksi',
+      isAll: false,
+    });
   };
 
-  const handleDeleteAll = async () => {
+  const handlePromptDeleteAll = () => {
     if (trades.length === 0) return;
-    if (!window.confirm(`PERINGATAN: Apakah Anda yakin ingin menghapus SEMUA (${trades.length}) transaksi di jurnal? Tindakan ini tidak dapat dibatalkan.`)) return;
+    setDeleteModal({
+      isOpen: true,
+      isAll: true,
+      count: trades.length,
+    });
+  };
 
+  const handleExecuteDelete = async () => {
+    setIsDeleting(true);
     try {
-      const { error } = await supabase.from('trades').delete().eq('user_id', targetUserId);
-      if (error) throw error;
-      setTrades([]);
-      showToast('Semua transaksi di jurnal berhasil dihapus.');
+      if (deleteModal.isAll) {
+        const { error } = await supabase.from('trades').delete().eq('user_id', targetUserId);
+        if (error) throw error;
+        setTrades([]);
+        showToast('Semua transaksi di jurnal berhasil dihapus.');
+      } else if (deleteModal.tradeId) {
+        const { error } = await supabase.from('trades').delete().eq('id', deleteModal.tradeId);
+        if (error) throw error;
+        setTrades(prev => prev.filter(t => t.id !== deleteModal.tradeId));
+        showToast(`Transaksi ${deleteModal.tradePair || ''} berhasil dihapus.`);
+      }
+      setDeleteModal({ isOpen: false });
     } catch (error: any) {
-      showToast('Gagal menghapus jurnal: ' + error.message, 'error');
+      showToast('Gagal menghapus data: ' + error.message, 'error');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -228,7 +252,7 @@ export const JournalTable = () => {
           <div className="flex items-center gap-2">
             {trades.length > 0 && (
               <button
-                onClick={handleDeleteAll}
+                onClick={handlePromptDeleteAll}
                 className="glass-button text-xs py-1.5 px-3 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border-rose-500/20 flex items-center gap-1.5"
                 title="Hapus Semua Data Jurnal"
               >
@@ -460,7 +484,7 @@ export const JournalTable = () => {
                             <Eye className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={(e) => handleDelete(trade.id, e)}
+                            onClick={(e) => handlePromptDeleteSingle(trade, e)}
                             className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
                             title="Hapus Transaksi"
                           >
@@ -537,7 +561,7 @@ export const JournalTable = () => {
                   <span>Lots: {lot}</span>
                   <span>R:R {trade.rr_realized ? `1:${trade.rr_realized}` : '-'}</span>
                   <button
-                    onClick={(e) => handleDelete(trade.id, e)}
+                    onClick={(e) => handlePromptDeleteSingle(trade, e)}
                     className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10"
                     title="Hapus Transaksi"
                   >
@@ -555,6 +579,23 @@ export const JournalTable = () => {
         isOpen={!!selectedTrade}
         trade={selectedTrade}
         onClose={() => setSelectedTrade(null)}
+      />
+
+      {/* Luxury Custom Confirm Modal */}
+      <ConfirmModal
+        isOpen={deleteModal.isOpen}
+        onClose={() => !isDeleting && setDeleteModal({ isOpen: false })}
+        onConfirm={handleExecuteDelete}
+        isLoading={isDeleting}
+        variant="danger"
+        title={deleteModal.isAll ? "Hapus Semua Riwayat Jurnal?" : `Hapus Transaksi ${deleteModal.tradePair}?`}
+        message={
+          deleteModal.isAll 
+            ? `Apakah Anda yakin ingin menghapus seluruh ${deleteModal.count || trades.length} transaksi di jurnal ini? Seluruh data histori dan analitik akan direset permanen.`
+            : `Transaksi ${deleteModal.tradePair} ini akan dihapus permanen dari database. Tindakan ini tidak dapat dibatalkan.`
+        }
+        confirmText={deleteModal.isAll ? "Ya, Hapus Semua" : "Ya, Hapus"}
+        cancelText="Batal"
       />
 
     </div>
