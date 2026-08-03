@@ -91,16 +91,29 @@ export const JournalTable = () => {
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!user) return;
     if (!window.confirm('Apakah Anda yakin ingin menghapus transaksi ini?')) return;
 
     try {
       const { error } = await supabase.from('trades').delete().eq('id', id);
       if (error) throw error;
-      setTrades(trades.filter(t => t.id !== id));
+      setTrades(prev => prev.filter(t => t.id !== id));
       showToast('Transaksi berhasil dihapus.');
     } catch (error: any) {
       showToast('Gagal menghapus transaksi: ' + error.message, 'error');
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (trades.length === 0) return;
+    if (!window.confirm(`PERINGATAN: Apakah Anda yakin ingin menghapus SEMUA (${trades.length}) transaksi di jurnal? Tindakan ini tidak dapat dibatalkan.`)) return;
+
+    try {
+      const { error } = await supabase.from('trades').delete().eq('user_id', targetUserId);
+      if (error) throw error;
+      setTrades([]);
+      showToast('Semua transaksi di jurnal berhasil dihapus.');
+    } catch (error: any) {
+      showToast('Gagal menghapus jurnal: ' + error.message, 'error');
     }
   };
 
@@ -213,6 +226,16 @@ export const JournalTable = () => {
         description="Comprehensive historical trade records, execution metrics & algorithmic review."
         action={
           <div className="flex items-center gap-2">
+            {trades.length > 0 && (
+              <button
+                onClick={handleDeleteAll}
+                className="glass-button text-xs py-1.5 px-3 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border-rose-500/20 flex items-center gap-1.5"
+                title="Hapus Semua Data Jurnal"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Hapus Semua</span>
+              </button>
+            )}
             <button
               onClick={() => fetchTrades(false)}
               disabled={isRefreshing}
@@ -230,15 +253,13 @@ export const JournalTable = () => {
               <Download className="w-3.5 h-3.5 text-amber-400" />
               <span>Export CSV</span>
             </button>
-            {user && (
-              <button
-                onClick={() => navigate('/trades/new')}
-                className="glass-button-primary text-xs py-1.5 px-3.5 flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Trade</span>
-              </button>
-            )}
+            <button
+              onClick={() => navigate('/trades/new')}
+              className="glass-button-primary text-xs py-1.5 px-3.5 flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Trade</span>
+            </button>
           </div>
         }
       />
@@ -438,15 +459,13 @@ export const JournalTable = () => {
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
-                          {user && (
-                            <button
-                              onClick={(e) => handleDelete(trade.id, e)}
-                              className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
-                              title="Hapus"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <button
+                            onClick={(e) => handleDelete(trade.id, e)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
+                            title="Hapus Transaksi"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -517,14 +536,13 @@ export const JournalTable = () => {
                 <div className="pt-3 border-t border-white/[0.04] flex items-center justify-between text-[11px] text-slate-400 font-mono">
                   <span>Lots: {lot}</span>
                   <span>R:R {trade.rr_realized ? `1:${trade.rr_realized}` : '-'}</span>
-                  {user && (
-                    <button
-                      onClick={(e) => handleDelete(trade.id, e)}
-                      className="p-1 rounded text-slate-500 hover:text-rose-400"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  )}
+                  <button
+                    onClick={(e) => handleDelete(trade.id, e)}
+                    className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10"
+                    title="Hapus Transaksi"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             );
