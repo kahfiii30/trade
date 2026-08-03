@@ -33,7 +33,7 @@ import {
   Tooltip, 
   ResponsiveContainer
 } from 'recharts';
-import type { Trade } from '../types/database';
+import type { Trade, Settings } from '../types/database';
 import { TradeDetailsModal } from '../components/TradeDetailsModal';
 import { PositionCalculatorModal } from '../components/PositionCalculatorModal';
 import { PORTFOLIO_USER_ID } from '../lib/constants';
@@ -49,6 +49,7 @@ import {
 export const Dashboard = () => {
   const { user } = useAuth();
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [accountSettings, setAccountSettings] = useState<Settings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [initialCapital, setInitialCapital] = useState<number>(10000);
   const [chartMode, setChartMode] = useState<'equity' | 'pnl' | 'drawdown'>('equity');
@@ -63,12 +64,15 @@ export const Dashboard = () => {
     try {
       const { data: settingsData } = await supabase
         .from('settings')
-        .select('initial_capital')
+        .select('*')
         .eq('user_id', targetUserId)
         .single();
       
-      if (settingsData?.initial_capital) {
-        setInitialCapital(Number(settingsData.initial_capital));
+      if (settingsData) {
+        setAccountSettings(settingsData);
+        if (settingsData.initial_capital) {
+          setInitialCapital(Number(settingsData.initial_capital));
+        }
       }
 
       const { data: tradesData, error } = await supabase
@@ -91,10 +95,17 @@ export const Dashboard = () => {
     fetchData(true);
 
     const channel = supabase
-      .channel('dashboard-trades-realtime')
+      .channel('dashboard-realtime-all')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'trades' },
+        () => {
+          fetchData(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'settings' },
         () => {
           fetchData(true);
         }
@@ -121,6 +132,20 @@ export const Dashboard = () => {
   
   const realizedBalance = initialCapital + closedNetPnL;
   const liveEquity = realizedBalance + floatingPnL;
+  
+  // Realtime MT5 Telemetry Priority
+  const displayBalance = accountSettings?.live_balance !== undefined && accountSettings?.live_balance !== null
+    ? Number(accountSettings.live_balance)
+    : realizedBalance;
+  
+  const displayEquity = accountSettings?.live_equity !== undefined && accountSettings?.live_equity !== null
+    ? Number(accountSettings.live_equity)
+    : liveEquity;
+
+  const displayFloating = accountSettings?.live_profit !== undefined && accountSettings?.live_profit !== null
+    ? Number(accountSettings.live_profit)
+    : floatingPnL;
+
   const returnPercentage = initialCapital > 0 ? (closedNetPnL / initialCapital) * 100 : 0;
 
   const totalGrossProfit = winningTrades.reduce((acc, t) => acc + Math.max(0, getTradeNetPnL(t)), 0);
@@ -238,16 +263,27 @@ export const Dashboard = () => {
       {/* Luxury Cockpit Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-white/[0.04]">
         <div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-xl sm:text-2xl font-bold font-sans text-white tracking-tight">
               Executive Terminal HUD
             </h1>
             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20">
               PORTFOLIO COCKPIT
             </span>
+            {accountSettings?.account_login && (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-sm">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                MT5 LIVE: {accountSettings.server || 'Exness'} (#{accountSettings.account_login})
+              </span>
+            )}
           </div>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Realtime institutional ledger, risk metrics & performance telemetry.
+            Realtime institutional ledger, risk metrics & MT5 broker telemetry.
+            {accountSettings?.last_sync && (
+              <span className="text-[11px] text-slate-500 ml-2 font-mono">
+                • Synced: {new Date(accountSettings.last_sync).toLocaleTimeString()}
+              </span>
+            )}
           </p>
         </div>
 
@@ -283,13 +319,13 @@ export const Dashboard = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
           title="Account Equity & Balance" 
-          value={`$${liveEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          subtitle={`Closed: $${realizedBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })} ${floatingPnL !== 0 ? `(Float: ${floatingPnL >= 0 ? '+' : ''}$${floatingPnL.toFixed(2)})` : ''}`}
-          trend={closedNetPnL >= 0 ? 'up' : 'down'}
+          value={`$${displayEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          subtitle={`Balance: $${displayBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })} ${displayFloating !== 0 ? `(Float: ${displayFloating >= 0 ? '+' : ''}$${displayFloating.toFixed(2)})` : ''}`}
+          trend={displayFloating >= 0 ? 'up' : 'down'}
           trendValue={`${returnPercentage >= 0 ? '+' : ''}${returnPercentage.toFixed(2)}% Net`}
           icon={<DollarSign className="w-4 h-4" />}
-          accentColor={closedNetPnL >= 0 ? 'emerald' : 'rose'}
-          glow={closedNetPnL >= 0 ? 'emerald' : 'rose'}
+          accentColor={displayFloating >= 0 ? 'emerald' : 'rose'}
+          glow={displayFloating >= 0 ? 'emerald' : 'rose'}
         />
 
         <StatCard 
@@ -713,7 +749,7 @@ export const Dashboard = () => {
       <PositionCalculatorModal 
         isOpen={isCalculatorOpen}
         onClose={() => setIsCalculatorOpen(false)}
-        defaultBalance={liveEquity}
+        defaultBalance={displayBalance}
       />
 
     </div>

@@ -16,6 +16,14 @@ export interface Settings {
   default_rr: number;
   daily_max_trades: number;
   currency: string;
+  live_balance?: number;
+  live_equity?: number;
+  live_profit?: number;
+  live_margin?: number;
+  live_margin_free?: number;
+  server?: string;
+  account_login?: string;
+  last_sync?: string;
 }
 
 export interface Trade {

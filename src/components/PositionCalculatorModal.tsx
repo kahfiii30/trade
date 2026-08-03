@@ -1,4 +1,4 @@
-import { useState, useId } from 'react';
+import { useState, useEffect, useId } from 'react';
 import { X, Calculator, ShieldCheck, Copy, Check, Info } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
 
@@ -15,6 +15,13 @@ export const PositionCalculatorModal = ({
 }: PositionCalculatorModalProps) => {
   const { showToast } = useToast();
   const [balance, setBalance] = useState<number>(defaultBalance);
+
+  useEffect(() => {
+    if (defaultBalance) {
+      setBalance(defaultBalance);
+    }
+  }, [defaultBalance, isOpen]);
+
   const [riskPercent, setRiskPercent] = useState<number>(1);
   const [assetType, setAssetType] = useState<'forex' | 'gold' | 'indices' | 'crypto'>('gold');
   const [stopLossPips, setStopLossPips] = useState<number>(25);

@@ -97,6 +97,51 @@ def update_trade(token, trade_id, update_data):
         print(f"Error: {e}")
         return False
 
+def sync_account_metrics(token, user_id, acc):
+    url = f"{SUPABASE_URL}/rest/v1/settings?user_id=eq.{user_id}"
+    payload = {
+        "user_id": user_id,
+        "live_balance": float(acc.balance),
+        "live_equity": float(acc.equity),
+        "live_profit": float(acc.profit),
+        "live_margin": float(acc.margin),
+        "live_margin_free": float(acc.margin_free),
+        "server": str(acc.server),
+        "account_login": str(acc.login),
+        "currency": str(acc.currency),
+        "last_sync": datetime.now().isoformat()
+    }
+    
+    req_get = urllib.request.Request(url, method='GET')
+    req_get.add_header('apikey', SUPABASE_KEY)
+    req_get.add_header('Authorization', f'Bearer {token}')
+    
+    try:
+        with urllib.request.urlopen(req_get) as response:
+            existing = json.loads(response.read().decode())
+            if existing and len(existing) > 0:
+                update_url = f"{SUPABASE_URL}/rest/v1/settings?id=eq.{existing[0]['id']}"
+                req_patch = urllib.request.Request(update_url, data=json.dumps(payload).encode('utf-8'), method='PATCH')
+                req_patch.add_header('apikey', SUPABASE_KEY)
+                req_patch.add_header('Authorization', f'Bearer {token}')
+                req_patch.add_header('Content-Type', 'application/json')
+                req_patch.add_header('Prefer', 'return=minimal')
+                with urllib.request.urlopen(req_patch) as patch_res:
+                    return patch_res.status in (200, 204)
+            else:
+                insert_url = f"{SUPABASE_URL}/rest/v1/settings"
+                payload["initial_capital"] = float(acc.balance)
+                req_post = urllib.request.Request(insert_url, data=json.dumps(payload).encode('utf-8'), method='POST')
+                req_post.add_header('apikey', SUPABASE_KEY)
+                req_post.add_header('Authorization', f'Bearer {token}')
+                req_post.add_header('Content-Type', 'application/json')
+                req_post.add_header('Prefer', 'return=minimal')
+                with urllib.request.urlopen(req_post) as post_res:
+                    return post_res.status in (201, 204)
+    except Exception as e:
+        print(f"[-] Gagal update telemetry akun: {e}")
+        return False
+
 # ==========================================
 # FUNGSI UTAMA
 # ==========================================
@@ -119,7 +164,15 @@ def main():
         print("initialize() gagal, pastikan MT5 terbuka. Error code =", mt5.last_error())
         return
         
-    print(f"MT5 Terhubung! Terminal: {mt5.terminal_info().name}")
+    term_info = mt5.terminal_info()
+    acc_info = mt5.account_info()
+    print(f"MT5 Terhubung! Terminal: {term_info.name} | Broker: {acc_info.server}")
+    print(f"Akun MT5: {acc_info.login} ({acc_info.name}) | Currency: {acc_info.currency}")
+    print(f"Live Balance: ${acc_info.balance:.2f} | Live Equity: ${acc_info.equity:.2f} | Floating: ${acc_info.profit:+.2f}")
+
+    # Sinkronisasi Info Akun Realtime ke Supabase
+    if sync_account_metrics(token, user_id, acc_info):
+        print("[+] Status Akun Realtime Berhasil Disinkronkan ke Web Dashboard!")
 
     synced_open_count = 0
     synced_closed_count = 0
