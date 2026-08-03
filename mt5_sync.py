@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 import urllib.request
 from urllib.error import URLError, HTTPError
 from datetime import datetime, timedelta
@@ -156,32 +157,16 @@ def get_ignored_tickets(token, user_id):
         print(f"[-] Gagal mengambil daftar blacklist/ignored tickets: {e}")
         return set()
 
-# ==========================================
-# FUNGSI UTAMA
-# ==========================================
-def main():
-    print("=== Trade Hitoshi MT5 Auto-Sync ===")
-    
-    # 1. Login ke Supabase
-    print("Menghubungkan ke Supabase (via REST API)...")
-    token, user_id = supabase_login(USER_EMAIL, USER_PASSWORD)
-    
-    if not token:
-        print("Gagal login! Pastikan USER_EMAIL dan USER_PASSWORD sudah diisi dengan benar.")
-        return
-        
-    print(f"Berhasil login ke jurnal! User ID: {user_id}")
-
+def sync_pass(token, user_id, days_back=7):
     # Ambil daftar tiket transaksi yang dihapus/diblacklist oleh user di web
     ignored_tickets = get_ignored_tickets(token, user_id)
     if ignored_tickets:
         print(f"[*] Terdeteksi {len(ignored_tickets)} tiket yang dihapus/diblacklist di Web (tidak akan ditarik ulang).")
 
-    # 2. Inisialisasi MetaTrader 5
-    print("\nMenghubungkan ke MetaTrader 5...")
+    # Inisialisasi MetaTrader 5
     if not mt5.initialize():
         print("initialize() gagal, pastikan MT5 terbuka. Error code =", mt5.last_error())
-        return
+        return False
         
     term_info = mt5.terminal_info()
     acc_info = mt5.account_info()
@@ -196,7 +181,7 @@ def main():
     synced_open_count = 0
     synced_closed_count = 0
 
-    # 3. SINKRONISASI POSISI BERJALAN / OPEN POSITIONS (Status: Pending)
+    # SINKRONISASI POSISI BERJALAN / OPEN POSITIONS (Status: Pending)
     print("\n--- Memeriksa Posisi Berjalan (Open Positions) ---")
     open_positions = mt5.positions_get()
     if open_positions:
@@ -250,16 +235,9 @@ def main():
                     if update_trade(token, existing['id'], update_data):
                         print(f"[*] Posisi Berjalan Diperbarui: {p.symbol} (ID: {p.ticket}) | Floating: ${p.profit:.2f}")
     else:
-        print("Tidak ada posisi berjalan yang aktif saat ini.")
+        print("Tidak ada posisi berjalan saat ini.")
 
-    # 4. SINKRONISASI HISTORI TRANSAKSI YANG SUDAH DITUTUP
-    days_back = 7
-    if len(sys.argv) > 1:
-        try:
-            days_back = int(sys.argv[1])
-        except ValueError:
-            pass
-            
+    # SINKRONISASI DEALS TERTUTUP / CLOSED TRADES
     now = datetime.now()
     date_from = now - timedelta(days=days_back)
     
@@ -363,11 +341,56 @@ def main():
                 print(f"[-] Dilewati: Sudah ada di jurnal (Position ID: {deal.position_id})")
 
     print(f"\n==========================================")
-    print(f"Sinkronisasi selesai!")
+    print(f"Hasil Sinkronisasi:")
     print(f"- Posisi Berjalan (Open): {synced_open_count} baru ditambahkan")
     print(f"- Transaksi Ditutup (Closed): {synced_closed_count} diproses")
     print(f"==========================================")
-    mt5.shutdown()
+    return True
+
+# ==========================================
+# FUNGSI UTAMA
+# ==========================================
+def main():
+    watch_mode = ("--watch" in sys.argv or "--live" in sys.argv or "-w" in sys.argv)
+    
+    print("=== Trade Hitoshi MT5 Auto-Sync ===")
+    if watch_mode:
+        print("[MODE: CONTINUOUS LIVE WATCH (Looping setiap 15 detik)]")
+        print("Tekan Ctrl + C untuk keluar kapan saja.\n")
+    
+    # 1. Login ke Supabase
+    print("Menghubungkan ke Supabase (via REST API)...")
+    token, user_id = supabase_login(USER_EMAIL, USER_PASSWORD)
+    
+    if not token:
+        print("Gagal login! Pastikan USER_EMAIL dan USER_PASSWORD sudah diisi dengan benar.")
+        return
+        
+    print(f"Berhasil login ke jurnal! User ID: {user_id}")
+
+    days_back = 7
+    for arg in sys.argv[1:]:
+        try:
+            days_back = int(arg)
+        except ValueError:
+            pass
+
+    if watch_mode:
+        cycle = 1
+        try:
+            while True:
+                print(f"\n>>> [Cycle #{cycle}] Menjalankan sinkronisasi realtime pada {datetime.now().strftime('%H:%M:%S')} <<<")
+                sync_pass(token, user_id, days_back=days_back)
+                cycle += 1
+                print("\nMenunggu 15 detik untuk siklus berikutnya... (Ctrl+C untuk berhenti)")
+                time.sleep(15)
+        except KeyboardInterrupt:
+            print("\n[!] Continuous Sync dihentikan oleh pengguna.")
+        finally:
+            mt5.shutdown()
+    else:
+        sync_pass(token, user_id, days_back=days_back)
+        mt5.shutdown()
 
 if __name__ == "__main__":
     main()

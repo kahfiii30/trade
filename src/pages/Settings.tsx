@@ -195,10 +195,36 @@ export const Settings = () => {
             <Radio className="w-4 h-4 text-amber-400 animate-pulse" />
             <h3 className="font-sans font-bold text-sm text-white">MetaTrader 5 Bridge Integration</h3>
           </div>
-          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            SYNC ENGINE READY
+          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold border ${
+            settings.account_login 
+              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+          }`}>
+            {settings.account_login ? '● MT5 CONNECTED' : 'READY TO SYNC'}
           </span>
         </div>
+
+        {/* Live MT5 Connected Telemetry */}
+        {settings.account_login && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 mb-4 rounded-xl bg-black/40 border border-white/[0.06]">
+            <div>
+              <span className="text-[10px] text-slate-400 font-mono block">BROKER / SERVER</span>
+              <span className="text-xs font-bold text-white font-mono">{settings.server || 'Exness'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-mono block">ACCOUNT LOGIN</span>
+              <span className="text-xs font-bold text-amber-300 font-mono">#{settings.account_login}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-mono block">LIVE BALANCE</span>
+              <span className="text-xs font-bold text-emerald-400 font-mono">${Number(settings.live_balance || 0).toLocaleString()}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-mono block">LIVE EQUITY</span>
+              <span className="text-xs font-bold text-emerald-400 font-mono">${Number(settings.live_equity || 0).toLocaleString()}</span>
+            </div>
+          </div>
+        )}
 
         <p className="text-xs text-slate-300 leading-relaxed mb-4">
           Anda dapat menghubungkan akun MT5 (Demo maupun Real dari broker manapun) ke web dashboard Trade Hitoshi. Semua order dan deal yang sudah tertutup akan disinkronkan secara realtime ke database.
@@ -206,12 +232,11 @@ export const Settings = () => {
 
         <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2 font-mono text-xs text-slate-300">
           <div className="flex items-center gap-2 text-amber-300 font-bold">
-            <Terminal className="w-4 h-4" /> Cara Menjalankan MT5 Sync:
+            <Terminal className="w-4 h-4" /> Mode Menjalankan MT5 Sync:
           </div>
           <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-slate-400">
-            <li>Buka terminal MetaTrader 5 di PC Anda dan pastikan sudah login ke akun trading Anda.</li>
-            <li>Jalankan file <span className="text-amber-300 font-bold">mt5.bat</span> (atau ketik <code className="text-white bg-white/10 px-1 py-0.5 rounded">python mt5_sync.py</code>).</li>
-            <li>Sistem akan mendeteksi transaksi tertutup baru dan langsung menampilkannya di Jurnal & Dashboard secara instan.</li>
+            <li><span className="text-amber-300 font-bold">mt5.bat</span>: Sinkronisasi 1x cepat untuk menarik transaksi terbaru saat ini.</li>
+            <li><span className="text-emerald-400 font-bold">mt5_live.bat</span>: Sinkronisasi realtime otomatis terus menerus setiap 15 detik (Live Bridge).</li>
           </ol>
         </div>
       </Card>
