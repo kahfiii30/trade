@@ -9,5 +9,5 @@ echo  Interval: Otomatis sinkronisasi setiap 15 detik.
 echo  Info: Tekan tombol [Ctrl + C] di keyboard jika ingin menghentikan.
 echo ===================================================================
 echo.
-python "%~dp0mt5_sync.py" --watch
+python -u "%~dp0mt5_sync.py" --watch
 pause

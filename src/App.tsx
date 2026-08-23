@@ -20,12 +20,15 @@ import { Playbook } from './pages/Playbook';
 // Placeholder Pages
 import { Settings } from './pages/Settings';
 
+import { SettingsProvider } from './contexts/SettingsContext';
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <ToastProvider>
-          <Routes>
+        <SettingsProvider>
+          <ToastProvider>
+            <Routes>
             <Route path="/login" element={<AuthPage />} />
             
             <Route element={<AppLayout />}>
@@ -45,7 +48,8 @@ function App() {
               </Route>
             </Route>
           </Routes>
-        </ToastProvider>
+          </ToastProvider>
+        </SettingsProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -45,6 +45,7 @@ import {
   isTradeWin, 
   isTradeLoss 
 } from '../utils/tradeUtils';
+import { formatCurrency } from '../lib/format';
 
 export const Dashboard = () => {
   const { user } = useAuth();
@@ -117,11 +118,9 @@ export const Dashboard = () => {
     };
   }, [targetUserId]);
 
-  // Separate Closed and Open / Pending positions
   const closedTrades = trades.filter(t => t.result !== 'Pending');
   const pendingTrades = trades.filter(t => t.result === 'Pending');
 
-  // Performance Metrics (Calculated on Closed Trades)
   const totalTrades = closedTrades.length;
   const winningTrades = closedTrades.filter(t => isTradeWin(t));
   const losingTrades = closedTrades.filter(t => isTradeLoss(t));
@@ -133,7 +132,6 @@ export const Dashboard = () => {
   const realizedBalance = initialCapital + closedNetPnL;
   const liveEquity = realizedBalance + floatingPnL;
   
-  // Realtime MT5 Telemetry Priority
   const displayBalance = accountSettings?.live_balance !== undefined && accountSettings?.live_balance !== null
     ? Number(accountSettings.live_balance)
     : realizedBalance;
@@ -156,7 +154,6 @@ export const Dashboard = () => {
   const avgLoss = losingTrades.length > 0 ? totalGrossLoss / losingTrades.length : 0;
   const riskRewardRatio = avgLoss > 0 ? avgWin / avgLoss : 0;
 
-  // Session Breakdown (Asian: 00-08 UTC, London: 08-16 UTC, NY: 13-21 UTC)
   const sessionStats = {
     asian: { trades: 0, pnl: 0, wins: 0 },
     london: { trades: 0, pnl: 0, wins: 0 },
@@ -185,7 +182,6 @@ export const Dashboard = () => {
     }
   });
 
-  // Calculate Cumulative Equity Chronologically (Oldest to Newest)
   const sortedClosedTrades = [...closedTrades].sort((a, b) => {
     return new Date(getTradeDate(a)).getTime() - new Date(getTradeDate(b)).getTime();
   });
@@ -197,7 +193,6 @@ export const Dashboard = () => {
   const chartData: any[] = [];
 
   if (sortedClosedTrades.length > 0) {
-    // Starting Point at Initial Capital
     chartData.push({
       date: 'Start Capital',
       equity: initialCapital,
@@ -239,7 +234,6 @@ export const Dashboard = () => {
     });
   }
 
-  // Trader Discipline Score (0-100)
   const disciplineScore = Math.max(50, Math.min(98, Math.round(100 - (maxDrawdownPct > 10 ? 20 : maxDrawdownPct * 1.2) + (profitFactor > 1.5 ? 10 : 0))));
 
   const isProfitablePortfolio = realizedBalance >= initialCapital;
@@ -260,7 +254,6 @@ export const Dashboard = () => {
   return (
     <div className="space-y-6 pb-12 animate-fade-in">
       
-      {/* Luxury Cockpit Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-white/[0.04]">
         <div>
           <div className="flex items-center gap-2.5 flex-wrap">
@@ -315,12 +308,11 @@ export const Dashboard = () => {
         </div>
       </div>
 
-      {/* Top 4 Luxury Performance Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
           title="Account Equity & Balance" 
-          value={`$${displayEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          subtitle={`Balance: $${displayBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })} ${displayFloating !== 0 ? `(Float: ${displayFloating >= 0 ? '+' : ''}$${displayFloating.toFixed(2)})` : ''}`}
+          value={formatCurrency(displayEquity, accountSettings?.currency)}
+          subtitle={`Balance: ${formatCurrency(displayBalance, accountSettings?.currency)} ${displayFloating !== 0 ? `(Float: ${formatCurrency(displayFloating, accountSettings?.currency, true)})` : ''}`}
           trend={displayFloating >= 0 ? 'up' : 'down'}
           trendValue={`${returnPercentage >= 0 ? '+' : ''}${returnPercentage.toFixed(2)}% Net`}
           icon={<DollarSign className="w-4 h-4" />}
@@ -361,10 +353,8 @@ export const Dashboard = () => {
         />
       </div>
 
-      {/* Main Interactive Chart & Session Strips */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Left 2 Cols: Multi-Mode Interactive Chart */}
         <div className="lg:col-span-2">
           <ChartCard 
             title="Portfolio Performance Telemetry"
@@ -436,14 +426,11 @@ export const Dashboard = () => {
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
                       <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} />
-                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} />
+                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} domain={['auto', 'auto']} tickFormatter={(v) => formatCurrency(v, accountSettings?.currency)} />
                       
-                      <ReferenceLine 
-                        y={initialCapital} 
-                        stroke="#64748b" 
-                        strokeDasharray="4 4" 
-                        label={{ value: `Base $${initialCapital.toLocaleString()}`, fill: '#94a3b8', fontSize: 10, position: 'insideTopLeft' }} 
-                      />
+                      <ReferenceLine y={initialCapital} stroke="#64748b" strokeDasharray="4 4">
+                        <Label value={`Base ${formatCurrency(initialCapital, accountSettings?.currency)}`} fill="#94a3b8" fontSize={10} position="insideTopLeft" />
+                      </ReferenceLine>
 
                       <Tooltip 
                         content={({ active, payload }) => {
@@ -455,10 +442,10 @@ export const Dashboard = () => {
                               <div className="bg-[#0c0f17] border border-white/10 rounded-xl p-3 shadow-2xl text-xs font-mono">
                                 <div className="text-slate-400 mb-1">{data.date} {data.pair ? `• ${data.pair}` : ''}</div>
                                 <div className="text-sm font-bold text-white mb-1">
-                                  Balance: ${data.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                  Balance: {formatCurrency(data.equity, accountSettings?.currency)}
                                 </div>
                                 <div className={`text-xs font-semibold ${isAbove ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                  Net Return: {isAbove ? '+' : ''}${diff.toFixed(2)} ({((diff / initialCapital) * 100).toFixed(2)}%)
+                                  Net Return: {formatCurrency(diff, accountSettings?.currency, true)} ({((diff / initialCapital) * 100).toFixed(2)}%)
                                 </div>
                                 {data.drawdown > 0 && (
                                   <div className="text-[11px] text-rose-400/90 mt-0.5">
@@ -484,7 +471,7 @@ export const Dashboard = () => {
                     <BarChart data={chartData.filter(d => !d.isStart)} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
                       <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} />
-                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} tickFormatter={(v) => `$${v}`} />
+                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} tickFormatter={(v) => formatCurrency(v, accountSettings?.currency)} />
                       
                       <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="3 3" />
                       
@@ -498,7 +485,7 @@ export const Dashboard = () => {
                                 <div className="text-slate-400 mb-1">{data.date} • {data.pair}</div>
                                 <div className={`text-sm font-bold flex items-center gap-1.5 ${isWin ? 'text-emerald-400' : 'text-rose-400'}`}>
                                   <span>{isWin ? 'PROFIT' : 'LOSS'}:</span>
-                                  <span>{isWin ? '+' : ''}${data.pnl.toFixed(2)}</span>
+                                  <span>{formatCurrency(data.pnl, accountSettings?.currency, true)}</span>
                                 </div>
                                 <div className="text-[11px] text-slate-400 mt-1">
                                   Result: {data.result || (isWin ? 'Win' : 'Loss')} ({data.direction})
@@ -554,10 +541,8 @@ export const Dashboard = () => {
           </ChartCard>
         </div>
 
-        {/* Right 1 Col: Market Session Edge & Risk Guard */}
         <div className="space-y-6">
           
-          {/* Market Session Performance */}
           <Card className="p-5">
             <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/[0.05]">
               <div className="flex items-center gap-2">
@@ -568,7 +553,6 @@ export const Dashboard = () => {
             </div>
 
             <div className="space-y-3">
-              {/* London */}
               <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-2">
@@ -579,13 +563,12 @@ export const Dashboard = () => {
                 </div>
                 <div className="text-right font-mono">
                   <span className={`text-xs font-bold ${sessionStats.london.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {sessionStats.london.pnl >= 0 ? '+' : ''}${sessionStats.london.pnl.toFixed(2)}
+                    {formatCurrency(sessionStats.london.pnl, accountSettings?.currency, true)}
                   </span>
                   <span className="text-[10px] text-slate-400 block">{sessionStats.london.trades} Trades</span>
                 </div>
               </div>
 
-              {/* New York */}
               <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-2">
@@ -596,13 +579,12 @@ export const Dashboard = () => {
                 </div>
                 <div className="text-right font-mono">
                   <span className={`text-xs font-bold ${sessionStats.ny.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {sessionStats.ny.pnl >= 0 ? '+' : ''}${sessionStats.ny.pnl.toFixed(2)}
+                    {formatCurrency(sessionStats.ny.pnl, accountSettings?.currency, true)}
                   </span>
                   <span className="text-[10px] text-slate-400 block">{sessionStats.ny.trades} Trades</span>
                 </div>
               </div>
 
-              {/* Tokyo / Asian */}
               <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-2">
@@ -613,7 +595,7 @@ export const Dashboard = () => {
                 </div>
                 <div className="text-right font-mono">
                   <span className={`text-xs font-bold ${sessionStats.asian.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {sessionStats.asian.pnl >= 0 ? '+' : ''}${sessionStats.asian.pnl.toFixed(2)}
+                    {formatCurrency(sessionStats.asian.pnl, accountSettings?.currency, true)}
                   </span>
                   <span className="text-[10px] text-slate-400 block">{sessionStats.asian.trades} Trades</span>
                 </div>
@@ -621,7 +603,6 @@ export const Dashboard = () => {
             </div>
           </Card>
 
-          {/* Risk Guard & Discipline Card */}
           <Card className="p-5">
             <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-white/[0.05]">
               <div className="flex items-center gap-2">
@@ -640,7 +621,7 @@ export const Dashboard = () => {
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="text-slate-400">Max Daily DD Limit:</span>
-                <span className="font-mono text-slate-200">5.0% ($500.00)</span>
+                <span className="font-mono text-slate-200">5.0%</span>
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="text-slate-400">Position Sizing Status:</span>
@@ -653,7 +634,6 @@ export const Dashboard = () => {
 
       </div>
 
-      {/* Recent Executions Section */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -716,7 +696,7 @@ export const Dashboard = () => {
                         isWin ? 'text-emerald-400' : isLoss ? 'text-rose-400' : 'text-slate-400'
                       }`}>
                         {isWin ? <ArrowUpRight className="w-3.5 h-3.5" /> : isLoss ? <ArrowDownRight className="w-3.5 h-3.5" /> : null}
-                        {netPnL >= 0 ? '+' : ''}${netPnL.toFixed(2)}
+                        {formatCurrency(netPnL, accountSettings?.currency, true)}
                       </div>
                       <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded inline-block mt-0.5 ${
                         isWin ? 'bg-emerald-500/10 text-emerald-400' : isLoss ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-700/30 text-slate-400'
