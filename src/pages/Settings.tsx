@@ -14,7 +14,7 @@ export const Settings = () => {
     default_risk: 1,
     default_rr: 2,
     daily_max_trades: 2,
-    currency: 'USD'
+    currency: 'IDR'
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
@@ -100,7 +100,7 @@ export const Settings = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
               <label className="text-xs font-medium text-slate-400 block mb-2">
-                Initial Account Capital ($)
+                Initial Account Capital (Rp)
               </label>
               <input
                 type="number"
@@ -119,12 +119,12 @@ export const Settings = () => {
               </label>
               <select
                 name="currency"
-                value={settings.currency || 'USD'}
+                value={settings.currency || 'IDR'}
                 onChange={handleChange}
                 className="glass-input w-full text-sm font-sans"
               >
-                <option value="USD" className="bg-[#0c0f17]">USD ($)</option>
                 <option value="IDR" className="bg-[#0c0f17]">IDR (Rp)</option>
+                <option value="USD" className="bg-[#0c0f17]">USD ($)</option>
                 <option value="EUR" className="bg-[#0c0f17]">EUR (€)</option>
                 <option value="GBP" className="bg-[#0c0f17]">GBP (£)</option>
               </select>
@@ -206,7 +206,7 @@ export const Settings = () => {
 
         {/* Live MT5 Connected Telemetry */}
         {settings.account_login && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 mb-4 rounded-xl bg-black/40 border border-white/[0.06]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 mb-4 rounded-xl bg-black/40 border border-white/[0.06]">
             <div>
               <span className="text-[10px] text-slate-400 font-mono block">BROKER / SERVER</span>
               <span className="text-xs font-bold text-white font-mono">{settings.server || 'Exness'}</span>
@@ -215,13 +215,13 @@ export const Settings = () => {
               <span className="text-[10px] text-slate-400 font-mono block">ACCOUNT LOGIN</span>
               <span className="text-xs font-bold text-amber-300 font-mono">#{settings.account_login}</span>
             </div>
-            <div>
-              <span className="text-[10px] text-slate-400 font-mono block">LIVE BALANCE</span>
-              <span className="text-xs font-bold text-emerald-400 font-mono">${Number(settings.live_balance || 0).toLocaleString()}</span>
+            <div className="flex justify-between items-center bg-[#0c0f17] p-2 rounded-lg border border-white/5">
+              <span className="text-xs text-slate-400 font-medium">Balance</span>
+              <span className="text-xs font-bold text-emerald-400 font-mono">Rp {Number(settings.live_balance || 0).toLocaleString('id-ID')}</span>
             </div>
-            <div>
-              <span className="text-[10px] text-slate-400 font-mono block">LIVE EQUITY</span>
-              <span className="text-xs font-bold text-emerald-400 font-mono">${Number(settings.live_equity || 0).toLocaleString()}</span>
+            <div className="flex justify-between items-center bg-[#0c0f17] p-2 rounded-lg border border-white/5">
+              <span className="text-xs text-slate-400 font-medium">Equity</span>
+              <span className="text-xs font-bold text-emerald-400 font-mono">Rp {Number(settings.live_equity || 0).toLocaleString('id-ID')}</span>
             </div>
           </div>
         )}

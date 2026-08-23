@@ -409,7 +409,7 @@ export const TradeFormPage = () => {
                 <span className={`text-base font-extrabold font-mono ${
                   Number(formData.pnl_nominal) > 0 ? 'text-accent-emerald' : Number(formData.pnl_nominal) < 0 ? 'text-accent-rose' : 'text-slate-300'
                 }`}>
-                  {Number(formData.pnl_nominal) > 0 ? '+' : ''}${formData.pnl_nominal || 0}
+                  {Number(formData.pnl_nominal) > 0 ? '+' : ''}Rp {formData.pnl_nominal || 0}
                 </span>
               </div>
             </div>

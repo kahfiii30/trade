@@ -27,7 +27,7 @@ export const SettingsProvider = ({ children }: { children: React.ReactNode }) =>
       return;
     }
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('settings')
         .select('*')
         .eq('user_id', user.id)

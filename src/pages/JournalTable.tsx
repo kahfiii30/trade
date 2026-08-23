@@ -320,7 +320,7 @@ export const JournalTable = () => {
         <div>
           <span className="text-slate-400 text-[11px] block">Filtered Net P&L</span>
           <span className={`text-base font-bold ${filteredPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {filteredPnL >= 0 ? '+' : ''}${filteredPnL.toFixed(2)}
+            {filteredPnL >= 0 ? '+' : ''}Rp {filteredPnL.toFixed(2)}
           </span>
         </div>
         <div>
@@ -491,7 +491,7 @@ export const JournalTable = () => {
                       </td>
                       <td className="py-3 px-4 text-right font-bold">
                         <span className={isWin ? 'text-emerald-400' : isLoss ? 'text-rose-400' : 'text-slate-400'}>
-                          {netPnL >= 0 ? '+' : ''}${netPnL.toFixed(2)}
+                          {netPnL >= 0 ? '+' : ''}Rp {netPnL.toFixed(2)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-center">
@@ -567,7 +567,7 @@ export const JournalTable = () => {
                         isWin ? 'text-emerald-400' : isLoss ? 'text-rose-400' : 'text-slate-400'
                       }`}>
                         {isWin ? <ArrowUpRight className="w-4 h-4" /> : isLoss ? <ArrowDownRight className="w-4 h-4" /> : null}
-                        {netPnL >= 0 ? '+' : ''}${netPnL.toFixed(2)}
+                        {netPnL >= 0 ? '+' : ''}Rp {netPnL.toFixed(2)}
                       </span>
                       <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded inline-block mt-0.5 ${
                         isWin ? 'bg-emerald-500/10 text-emerald-400' : isLoss ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-700/30 text-slate-400'

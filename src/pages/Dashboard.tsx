@@ -31,7 +31,8 @@ import {
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  ResponsiveContainer
+  ResponsiveContainer,
+  Label
 } from 'recharts';
 import type { Trade, Settings } from '../types/database';
 import { TradeDetailsModal } from '../components/TradeDetailsModal';
